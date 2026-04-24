@@ -41,7 +41,7 @@ DECL_PATTERN(convert_uint##N)                                                   
             wu[i] = w[i];                                                       \
     }                                                                           \
                                                                                 \
-    CONTINUE(u##N##block_t, xu, yu, zu, wu);                                    \
+    CONTINUE(xu, yu, zu, wu);                                                   \
 }                                                                               \
                                                                                 \
 WRAP_COMMON_PATTERNS(convert_uint##N,                                           \
@@ -65,45 +65,41 @@ DECL_PATTERN(clear)
 {
     SWS_LOOP
     for (int i = 0; i < SWS_BLOCK_SIZE; i++) {
-        if (!X)
+        if (X)
             x[i] = impl->priv.px[0];
-        if (!Y)
+        if (Y)
             y[i] = impl->priv.px[1];
-        if (!Z)
+        if (Z)
             z[i] = impl->priv.px[2];
-        if (!W)
+        if (W)
             w[i] = impl->priv.px[3];
     }
 
-    CONTINUE(block_t, x, y, z, w);
+    CONTINUE(x, y, z, w);
 }
 
 #define WRAP_CLEAR(X, Y, Z, W)                                                  \
-DECL_IMPL(clear##_##X##Y##Z##W)                                                 \
-{                                                                               \
-    CALL(clear, X, Y, Z, W);                                                    \
-}                                                                               \
+DECL_IMPL(clear, clear##_##X##Y##Z##W, X, Y, Z, W)                              \
                                                                                 \
-DECL_ENTRY(clear##_##X##Y##Z##W,                                                \
+DECL_ENTRY(clear##_##X##Y##Z##W, SWS_COMP_ALL,                                  \
     .setup = ff_sws_setup_clear,                                                \
     .op = SWS_OP_CLEAR,                                                         \
-    .flexible = true,                                                           \
-    .unused = { !X, !Y, !Z, !W },                                               \
+    .clear.mask = SWS_COMP_MASK(X, Y, Z, W),                                    \
 );
 
-WRAP_CLEAR(1, 1, 1, 0) /* rgba alpha */
-WRAP_CLEAR(0, 1, 1, 1) /* argb alpha */
-WRAP_CLEAR(1, 0, 1, 1) /* ya alpha */
+WRAP_CLEAR(0, 0, 0, 1) /* rgba alpha */
+WRAP_CLEAR(1, 0, 0, 0) /* argb alpha */
+WRAP_CLEAR(0, 1, 0, 0) /* ya alpha */
 
-WRAP_CLEAR(0, 0, 1, 1) /* vuya chroma */
-WRAP_CLEAR(1, 0, 0, 1) /* yuva chroma */
-WRAP_CLEAR(1, 1, 0, 0) /* ayuv chroma */
-WRAP_CLEAR(0, 1, 0, 1) /* uyva chroma */
-WRAP_CLEAR(1, 0, 1, 0) /* xvyu chroma */
+WRAP_CLEAR(1, 1, 0, 0) /* vuya chroma */
+WRAP_CLEAR(0, 1, 1, 0) /* yuva chroma */
+WRAP_CLEAR(0, 0, 1, 1) /* ayuv chroma */
+WRAP_CLEAR(1, 0, 1, 0) /* uyva chroma */
+WRAP_CLEAR(0, 1, 0, 1) /* xvyu chroma */
 
-WRAP_CLEAR(1, 0, 0, 0) /* gray -> yuva */
-WRAP_CLEAR(0, 1, 0, 0) /* gray -> ayuv */
-WRAP_CLEAR(0, 0, 1, 0) /* gray -> vuya */
+WRAP_CLEAR(0, 1, 1, 1) /* gray -> yuva */
+WRAP_CLEAR(1, 0, 1, 1) /* gray -> ayuv */
+WRAP_CLEAR(1, 1, 0, 1) /* gray -> vuya */
 
 DECL_PATTERN(min)
 {
@@ -119,7 +115,7 @@ DECL_PATTERN(min)
             w[i] = FFMIN(w[i], impl->priv.px[3]);
     }
 
-    CONTINUE(block_t, x, y, z, w);
+    CONTINUE(x, y, z, w);
 }
 
 DECL_PATTERN(max)
@@ -136,7 +132,7 @@ DECL_PATTERN(max)
             w[i] = FFMAX(w[i], impl->priv.px[3]);
     }
 
-    CONTINUE(block_t, x, y, z, w);
+    CONTINUE(x, y, z, w);
 }
 
 WRAP_COMMON_PATTERNS(min,
@@ -167,7 +163,7 @@ DECL_PATTERN(scale)
             w[i] *= scale;
     }
 
-    CONTINUE(block_t, x, y, z, w);
+    CONTINUE(x, y, z, w);
 }
 
 WRAP_COMMON_PATTERNS(scale,
@@ -239,7 +235,7 @@ DECL_READ(filter_v, const int elems)
     for (int i = 0; i < elems; i++)
         iter->in[i] += sizeof(block_t);
 
-    CONTINUE(f32block_t, xs, ys, zs, ws);
+    CONTINUE(xs, ys, zs, ws);
 }
 
 DECL_SETUP(setup_filter_h, params, out)
@@ -292,16 +288,19 @@ DECL_READ(filter_h, const int elems)
         weights += filter_size;
     }
 
-    CONTINUE(f32block_t, xs, ys, zs, ws);
+    CONTINUE(xs, ys, zs, ws);
 }
 
 #define WRAP_FILTER(FUNC, DIR, ELEMS, SUFFIX)                                   \
-DECL_IMPL(FUNC##ELEMS##SUFFIX)                                                  \
+static av_flatten void fn(FUNC##ELEMS##SUFFIX)(SwsOpIter *restrict iter,        \
+                                             const SwsOpImpl *restrict impl,    \
+                                             void *restrict x, void *restrict y,\
+                                             void *restrict z, void *restrict w)\
 {                                                                               \
     CALL_READ(FUNC##SUFFIX, ELEMS);                                             \
 }                                                                               \
                                                                                 \
-DECL_ENTRY(FUNC##ELEMS##SUFFIX,                                                 \
+DECL_ENTRY(FUNC##ELEMS##SUFFIX, SWS_COMP_ELEMS(ELEMS),                          \
     .op = SWS_OP_READ,                                                          \
     .setup = fn(setup_filter##SUFFIX),                                          \
     .rw.elems = ELEMS,                                                          \
@@ -337,7 +336,7 @@ static void fn(process)(const SwsOpExec *exec, const void *priv,
     for (iter->y = y_start; iter->y < y_end; iter->y++) {
         for (int block = bx_start; block < bx_end; block++) {
             iter->x = block * SWS_BLOCK_SIZE;
-            CONTINUE(block_t, (void *) x, (void *) y, (void *) z, (void *) w);
+            CONTINUE(x, y, z, w);
         }
 
         const int y_bump = exec->in_bump_y ? exec->in_bump_y[iter->y] : 0;

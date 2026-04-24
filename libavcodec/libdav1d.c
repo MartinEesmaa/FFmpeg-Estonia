@@ -373,6 +373,8 @@ static int parse_itut_t35_metadata(Libdav1dContext *dav1d, Dav1dPicture *p,
     country_code = itut_t35->country_code;
     switch (country_code) {
     case ITU_T_T35_COUNTRY_CODE_US:
+        if (bytestream2_get_bytes_left(&gb) < 2)
+            return AVERROR_INVALIDDATA;
         provider_code = bytestream2_get_be16u(&gb);
 
         switch (provider_code) {
@@ -435,6 +437,22 @@ FF_ENABLE_DEPRECATION_WARNINGS
             }
 
             res = ff_dovi_attach_side_data(&dav1d->dovi, frame);
+            if (res < 0)
+                return res;
+            break;
+        }
+        case ITU_T_T35_PROVIDER_CODE_SMPTE: {
+            AVDynamicHDRSmpte2094App5 *hdr_smpte2094_app5;
+            int provider_oriented_code = bytestream2_get_be16(&gb);
+            if (provider_oriented_code != 1)
+                return 0; // ignore
+
+            hdr_smpte2094_app5 = av_dynamic_hdr_smpte2094_app5_create_side_data(frame);
+            if (!hdr_smpte2094_app5)
+                return AVERROR(ENOMEM);
+
+            res = av_dynamic_hdr_smpte2094_app5_from_t35(hdr_smpte2094_app5, gb.buffer,
+                                                         bytestream2_get_bytes_left(&gb));
             if (res < 0)
                 return res;
             break;

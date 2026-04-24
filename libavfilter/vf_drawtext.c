@@ -1435,8 +1435,13 @@ continue_on_failed:
     }
 
     s->line_count = line_count;
-    s->lines = av_mallocz(line_count * sizeof(TextLine));
-    s->tab_clusters = av_mallocz(s->tab_count * sizeof(uint32_t));
+    s->lines = av_calloc(line_count, sizeof(TextLine));
+    s->tab_clusters = av_calloc(s->tab_count, sizeof(uint32_t));
+    if ((line_count > 0 && !s->lines) ||
+        (s->tab_count > 0 && !s->tab_clusters)) {
+        ret = AVERROR(ENOMEM);
+        goto done;
+    }
     for (i = 0; i < s->tab_count; ++i) {
         s->tab_clusters[i] = -1;
     }
@@ -1884,7 +1889,11 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame)
             s->x = bbox->x;
             s->y = bbox->y - s->fontsize;
         }
-        draw_text(ctx, frame);
+        ret = draw_text(ctx, frame);
+        if (ret < 0) {
+            av_frame_free(&frame);
+            return ret;
+        }
     }
 
     return ff_filter_frame(outlink, frame);

@@ -292,7 +292,7 @@ op dither%1
 %xdefine MASK_COL(J) (0x8421 << J)
 %xdefine MASK_ALL    (1 << 20) - 1
 %xdefine MASK_LUMA   MASK(0, 0) | MASK_OFF(0)
-%xdefine MASK_ALPHA  MASK(3, 3) | MASK_OFF(3)
+%xdefine MASK_ALPHA  MASK(3, 3)
 %xdefine MASK_DIAG3  MASK(0, 0) | MASK(1, 1) | MASK(2, 2)
 %xdefine MASK_OFF3   MASK_OFF(0) | MASK_OFF(1) | MASK_OFF(2)
 %xdefine MASK_MAT3   MASK(0, 0) | MASK(0, 1) | MASK(0, 2) |\
@@ -327,7 +327,7 @@ op dither%1
     IF COL(2),  mulps m14, %4
     IF COL(3),  mulps m15, %5
     IF COL(0),  addps %1, m12
-    IF NOP(0) && COL(4), addps %1, %3 ; first vector was not reused
+    IF NOP(0) && COL(4), addps %1, %2 ; first vector was not reused
     IF COL(1),  addps %1, m13
     IF NOP(1),  addps %1, %3
     IF COL(2),  addps %1, m14
@@ -382,16 +382,18 @@ op dot3
         linear_mask luma,       MASK_LUMA
         linear_mask alpha,      MASK_ALPHA
         linear_mask lumalpha,   MASK_LUMA | MASK_ALPHA
-        linear_mask row0,       MASK_ROW(0)
-        linear_mask row0a,      MASK_ROW(0) | MASK_ALPHA
+        linear_mask yalpha,     MASK(1, 1)
+        linear_mask dot3a,      0x7 | MASK_ALPHA
+        linear_mask row0,       MASK_ROW(0) ^ MASK(0, 3)
         linear_mask diag3,      MASK_DIAG3
         linear_mask diag4,      MASK_DIAG4
         linear_mask diagoff3,   MASK_DIAG3 | MASK_OFF3
-        linear_mask matrix3,    MASK_MAT3
         linear_mask affine3,    MASK_MAT3 | MASK_OFF3
+        linear_mask affine3uv,  MASK_MAT3 | MASK_OFF(1) | MASK_OFF(2)
+        linear_mask affine3x,   MASK_MAT3 ^ MASK(0, 1) | MASK_OFF3
+        linear_mask affine3xa,  MASK_MAT3 ^ MASK(0, 1) | MASK_OFF3 | MASK_ALPHA
+        linear_mask affine3xy,  MASK_MAT3 ^ MASK(0, 0) ^ MASK(0, 1) | MASK_OFF3
         linear_mask affine3a,   MASK_MAT3 | MASK_OFF3 | MASK_ALPHA
-        linear_mask matrix4,    MASK_MAT4
-        linear_mask affine4,    MASK_MAT4 | MASK_OFF4
 %endmacro
 
 ;---------------------------------------------------------

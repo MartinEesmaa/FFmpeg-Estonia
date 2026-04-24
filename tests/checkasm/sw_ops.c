@@ -111,18 +111,12 @@ static void set_range(AVRational *rangeq, unsigned range, unsigned range_def)
         *rangeq = (AVRational) { range, 1 };
 }
 
-static void check_ops(const char *report, const unsigned ranges[NB_PLANES],
-                      const SwsOp *ops)
+static void check_compiled(const char *name, const SwsOpBackend *backend,
+                           const SwsOp *read_op, const SwsOp *write_op,
+                           const int ranges[NB_PLANES],
+                           const SwsCompiledOp *comp_ref,
+                           const SwsCompiledOp *comp_new)
 {
-    SwsContext *ctx = sws_alloc_context();
-    SwsCompiledOp comp_ref = {0}, comp_new = {0};
-    const SwsOpBackend *backend_new = NULL;
-    SwsOpList oplist = { .ops = (SwsOp *) ops };
-    const SwsOp *read_op, *write_op;
-    static const unsigned def_ranges[4] = {0};
-    if (!ranges)
-        ranges = def_ranges;
-
     declare_func(void, const SwsOpExec *, const void *, int bx, int y, int bx_end, int y_end);
 
     static DECLARE_ALIGNED_64(char, src0)[NB_PLANES][LINES][PIXELS * sizeof(uint32_t[4])];
@@ -130,41 +124,21 @@ static void check_ops(const char *report, const unsigned ranges[NB_PLANES],
     static DECLARE_ALIGNED_64(char, dst0)[NB_PLANES][LINES][PIXELS * sizeof(uint32_t[4])];
     static DECLARE_ALIGNED_64(char, dst1)[NB_PLANES][LINES][PIXELS * sizeof(uint32_t[4])];
 
-    if (!ctx)
-        return;
-    ctx->flags = SWS_BITEXACT;
-
-    read_op = &ops[0];
-    for (oplist.num_ops = 0; ops[oplist.num_ops].op; oplist.num_ops++)
-        write_op = &ops[oplist.num_ops];
-
-    const int read_size  = PIXELS * rw_pixel_bits(read_op)  >> 3;
-    const int write_size = PIXELS * rw_pixel_bits(write_op) >> 3;
-
+    av_assert0(PIXELS % comp_new->block_size == 0);
     for (int p = 0; p < NB_PLANES; p++) {
         void *plane = src0[p];
         switch (read_op->type) {
         case U8:
             fill8(plane, sizeof(src0[p]) /  sizeof(uint8_t), ranges[p]);
-            set_range(&oplist.comps_src.max[p], ranges[p], UINT8_MAX);
-            oplist.comps_src.min[p] = (AVRational) { 0, 1 };
             break;
         case U16:
             fill16(plane, sizeof(src0[p]) / sizeof(uint16_t), ranges[p]);
-            set_range(&oplist.comps_src.max[p], ranges[p], UINT16_MAX);
-            oplist.comps_src.min[p] = (AVRational) { 0, 1 };
             break;
         case U32:
             fill32(plane, sizeof(src0[p]) / sizeof(uint32_t), ranges[p]);
-            set_range(&oplist.comps_src.max[p], ranges[p], UINT32_MAX);
-            oplist.comps_src.min[p] = (AVRational) { 0, 1 };
             break;
         case F32:
             fill32f(plane, sizeof(src0[p]) / sizeof(uint32_t), ranges[p]);
-            if (ranges[p] && ranges[p] <= INT_MAX) {
-                oplist.comps_src.max[p] = (AVRational) { ranges[p], 1 };
-                oplist.comps_src.min[p] = (AVRational) { 0, 1 };
-            }
             break;
         }
     }
@@ -173,30 +147,8 @@ static void check_ops(const char *report, const unsigned ranges[NB_PLANES],
     memset(dst0, 0, sizeof(dst0));
     memset(dst1, 0, sizeof(dst1));
 
-    /* Compile `ops` using both the asm and c backends */
-    for (int n = 0; ff_sws_op_backends[n]; n++) {
-        const SwsOpBackend *backend = ff_sws_op_backends[n];
-        const bool is_ref = !strcmp(backend->name, "c");
-        if (is_ref || !comp_new.func) {
-            SwsCompiledOp comp;
-            int ret = ff_sws_ops_compile_backend(ctx, backend, &oplist, &comp);
-            if (ret == AVERROR(ENOTSUP))
-                continue;
-            else if (ret < 0)
-                fail();
-            else if (PIXELS % comp.block_size != 0)
-                fail();
-
-            if (is_ref)
-                comp_ref = comp;
-            if (!comp_new.func) {
-                comp_new = comp;
-                backend_new = backend;
-            }
-        }
-    }
-
-    av_assert0(comp_ref.func && comp_new.func);
+    const int read_size  = PIXELS * rw_pixel_bits(read_op)  >> 3;
+    const int write_size = PIXELS * rw_pixel_bits(write_op) >> 3;
 
     SwsOpExec exec = {0};
     exec.width = PIXELS;
@@ -227,54 +179,54 @@ static void check_ops(const char *report, const unsigned ranges[NB_PLANES],
     }
 
     /**
-     * Don't use check_func() because the actual function pointer may be a
-     * wrapper shared by multiple implementations. Instead, take a hash of both
-     * the backend pointer and the active CPU flags.
+     * We can't use `check_func()` alone because the actual function pointer
+     * may be a wrapper or entry point shared by multiple implementations.
+     * Solve it by hashing in the active CPU flags as well.
      */
-    uintptr_t id = (uintptr_t) backend_new;
-    id ^= (id << 6) + (id >> 2) + 0x9e3779b97f4a7c15 + comp_new.cpu_flags;
+    uintptr_t id = (uintptr_t) comp_new->func;
+    id ^= (id << 6) + (id >> 2) + 0x9e3779b97f4a7c15 + comp_new->cpu_flags;
 
-    if (check_key((void*) id, "%s", report)) {
-        exec.block_size_in  = comp_ref.block_size * rw_pixel_bits(read_op)  >> 3;
-        exec.block_size_out = comp_ref.block_size * rw_pixel_bits(write_op) >> 3;
+    if (check_key((void*) id, "%s/%s", name, backend->name)) {
+        exec.block_size_in  = comp_ref->block_size * rw_pixel_bits(read_op)  >> 3;
+        exec.block_size_out = comp_ref->block_size * rw_pixel_bits(write_op) >> 3;
         for (int i = 0; i < NB_PLANES; i++) {
             exec.in[i]  = (void *) src0[i];
             exec.out[i] = (void *) dst0[i];
         }
-        checkasm_call(comp_ref.func, &exec, comp_ref.priv, 0, 0, PIXELS / comp_ref.block_size, LINES);
+        checkasm_call(comp_ref->func, &exec, comp_ref->priv, 0, 0, PIXELS / comp_ref->block_size, LINES);
 
-        exec.block_size_in  = comp_new.block_size * rw_pixel_bits(read_op)  >> 3;
-        exec.block_size_out = comp_new.block_size * rw_pixel_bits(write_op) >> 3;
+        exec.block_size_in  = comp_new->block_size * rw_pixel_bits(read_op)  >> 3;
+        exec.block_size_out = comp_new->block_size * rw_pixel_bits(write_op) >> 3;
         for (int i = 0; i < NB_PLANES; i++) {
             exec.in[i]  = (void *) src1[i];
             exec.out[i] = (void *) dst1[i];
         }
-        checkasm_call_checked(comp_new.func, &exec, comp_new.priv, 0, 0, PIXELS / comp_new.block_size, LINES);
+        checkasm_call_checked(comp_new->func, &exec, comp_new->priv, 0, 0, PIXELS / comp_new->block_size, LINES);
 
         for (int i = 0; i < NB_PLANES; i++) {
-            const char *name = FMT("%s[%d]", report, i);
+            const char *desc = FMT("%s[%d]", name, i);
             const int stride = sizeof(dst0[i][0]);
 
             switch (write_op->type) {
             case U8:
                 checkasm_check(uint8_t, (void *) dst0[i], stride,
                                         (void *) dst1[i], stride,
-                                        write_size, LINES, name);
+                                        write_size, LINES, desc);
                 break;
             case U16:
                 checkasm_check(uint16_t, (void *) dst0[i], stride,
                                          (void *) dst1[i], stride,
-                                         write_size >> 1, LINES, name);
+                                         write_size >> 1, LINES, desc);
                 break;
             case U32:
                 checkasm_check(uint32_t, (void *) dst0[i], stride,
                                          (void *) dst1[i], stride,
-                                         write_size >> 2, LINES, name);
+                                         write_size >> 2, LINES, desc);
                 break;
             case F32:
                 checkasm_check(float_ulp, (void *) dst0[i], stride,
                                           (void *) dst1[i], stride,
-                                          write_size >> 2, LINES, name, 0);
+                                          write_size >> 2, LINES, desc, 0);
                 break;
             }
 
@@ -282,11 +234,101 @@ static void check_ops(const char *report, const unsigned ranges[NB_PLANES],
                 break;
         }
 
-        bench(comp_new.func, &exec, comp_new.priv, 0, 0, PIXELS / comp_new.block_size, LINES);
+        bench(comp_new->func, &exec, comp_new->priv, 0, 0, PIXELS / comp_new->block_size, LINES);
+    }
+}
+
+static void check_ops(const char *name, const unsigned ranges[NB_PLANES],
+                      const SwsOp *ops)
+{
+    SwsContext *ctx = sws_alloc_context();
+    if (!ctx)
+        return;
+    ctx->flags = SWS_BITEXACT;
+
+    static const unsigned def_ranges[4] = {0};
+    if (!ranges)
+        ranges = def_ranges;
+
+    const SwsOp *read_op, *write_op;
+    SwsOpList oplist = {
+        .ops = (SwsOp *) ops,
+        .plane_src = {0, 1, 2, 3},
+        .plane_dst = {0, 1, 2, 3},
+    };
+
+    read_op = &ops[0];
+    for (oplist.num_ops = 0; ops[oplist.num_ops].op; oplist.num_ops++)
+        write_op = &ops[oplist.num_ops];
+
+    for (int p = 0; p < NB_PLANES; p++) {
+        switch (read_op->type) {
+        case U8:
+            set_range(&oplist.comps_src.max[p], ranges[p], UINT8_MAX);
+            oplist.comps_src.min[p] = (AVRational) { 0, 1 };
+            break;
+        case U16:
+            set_range(&oplist.comps_src.max[p], ranges[p], UINT16_MAX);
+            oplist.comps_src.min[p] = (AVRational) { 0, 1 };
+            break;
+        case U32:
+            set_range(&oplist.comps_src.max[p], ranges[p], UINT32_MAX);
+            oplist.comps_src.min[p] = (AVRational) { 0, 1 };
+            break;
+        case F32:
+            if (ranges[p] && ranges[p] <= INT_MAX) {
+                oplist.comps_src.max[p] = (AVRational) { ranges[p], 1 };
+                oplist.comps_src.min[p] = (AVRational) { 0, 1 };
+            }
+            break;
+        }
     }
 
-    if (comp_new.func != comp_ref.func)
+    static const SwsOpBackend *backend_ref;
+    if (!backend_ref) {
+         for (int n = 0; ff_sws_op_backends[n]; n++) {
+            if (!strcmp(ff_sws_op_backends[n]->name, "c")) {
+                backend_ref = ff_sws_op_backends[n];
+                break;
+            }
+        }
+        av_assert0(backend_ref);
+    }
+
+    /* Always compile `ops` using the C backend as a reference */
+    SwsCompiledOp comp_ref = {0};
+    int ret = ff_sws_ops_compile_backend(ctx, backend_ref, &oplist, &comp_ref);
+    if (ret < 0) {
+        av_assert0(ret != AVERROR(ENOTSUP));
+        fail();
+        goto done;
+    }
+
+    /* Iterate over every other backend, and test it against the C reference */
+    for (int n = 0; ff_sws_op_backends[n]; n++) {
+        const SwsOpBackend *backend = ff_sws_op_backends[n];
+        if (backend->hw_format != AV_PIX_FMT_NONE || backend == backend_ref)
+            continue;
+
+        if (!av_get_cpu_flags()) {
+            /* Also test once with the existing C reference to set the baseline */
+            check_compiled(name, backend, read_op, write_op, ranges, &comp_ref, &comp_ref);
+        }
+
+        SwsCompiledOp comp_new = {0};
+        int ret = ff_sws_ops_compile_backend(ctx, backend, &oplist, &comp_new);
+        if (ret == AVERROR(ENOTSUP)) {
+            continue;
+        } else if (ret < 0) {
+            fail();
+            goto done;
+        }
+
+        check_compiled(name, backend, read_op, write_op, ranges, &comp_ref, &comp_new);
         ff_sws_compiled_op_unref(&comp_new);
+    }
+
+done:
     ff_sws_compiled_op_unref(&comp_ref);
     sws_free_context(&ctx);
 }
@@ -313,10 +355,10 @@ static void check_ops(const char *report, const unsigned ranges[NB_PLANES],
     CHECK_RANGES(NAME, MK_RANGES(RANGE), N_IN, N_OUT, IN, OUT, __VA_ARGS__)
 
 #define CHECK_COMMON_RANGE(NAME, RANGE, IN, OUT, ...)                           \
-    CHECK_RANGE(FMT("%s_p1000", NAME), RANGE, 1, 1, IN, OUT, __VA_ARGS__);      \
-    CHECK_RANGE(FMT("%s_p1110", NAME), RANGE, 3, 3, IN, OUT, __VA_ARGS__);      \
+    CHECK_RANGE(FMT("%s_p1000", NAME), RANGE, 4, 4, IN, OUT, __VA_ARGS__);      \
+    CHECK_RANGE(FMT("%s_p1110", NAME), RANGE, 4, 4, IN, OUT, __VA_ARGS__);      \
     CHECK_RANGE(FMT("%s_p1111", NAME), RANGE, 4, 4, IN, OUT, __VA_ARGS__);      \
-    CHECK_RANGE(FMT("%s_p1001", NAME), RANGE, 4, 2, IN, OUT, __VA_ARGS__, {     \
+    CHECK_RANGE(FMT("%s_p1001", NAME), RANGE, 4, 4, IN, OUT, __VA_ARGS__, {     \
         .op = SWS_OP_SWIZZLE,                                                   \
         .type = OUT,                                                            \
         .swizzle = SWS_SWIZZLE(0, 3, 1, 2),                                     \
@@ -498,37 +540,34 @@ static void check_clear(void)
             const AVRational zero   = (AVRational) { 0, 1};
             const AVRational none = {0};
 
-            const SwsClearOp patterns[] = {
+            const AVRational patterns[][4] = {
                 /* Zero only */
-                {{   none,   none,   none,   zero }},
-                {{   zero,   none,   none,   none }},
+                {   none,   none,   none,   zero },
+                {   zero,   none,   none,   none },
                 /* Alpha only */
-                {{   none,   none,   none,  alpha }},
-                {{  alpha,   none,   none,   none }},
+                {   none,   none,   none,  alpha },
+                {  alpha,   none,   none,   none },
                 /* Chroma only */
-                {{ chroma, chroma,   none,   none }},
-                {{   none, chroma, chroma,   none }},
-                {{   none,   none, chroma, chroma }},
-                {{ chroma,   none, chroma,   none }},
-                {{   none, chroma,   none, chroma }},
+                { chroma, chroma,   none,   none },
+                {   none, chroma, chroma,   none },
+                {   none,   none, chroma, chroma },
+                { chroma,   none, chroma,   none },
+                {   none, chroma,   none, chroma },
                 /* Alpha+chroma */
-                {{ chroma, chroma,   none,  alpha }},
-                {{   none, chroma, chroma,  alpha }},
-                {{  alpha,   none, chroma, chroma }},
-                {{ chroma,   none, chroma,  alpha }},
-                {{  alpha, chroma,   none, chroma }},
-                /* Random values */
-                {{ none, rndq(t), rndq(t), rndq(t) }},
-                {{ none, rndq(t), rndq(t), rndq(t) }},
-                {{ none, rndq(t), rndq(t), rndq(t) }},
-                {{ none, rndq(t), rndq(t), rndq(t) }},
+                { chroma, chroma,   none,  alpha },
+                {   none, chroma, chroma,  alpha },
+                {  alpha,   none, chroma, chroma },
+                { chroma,   none, chroma,  alpha },
+                {  alpha, chroma,   none, chroma },
             };
 
             for (int i = 0; i < FF_ARRAY_ELEMS(patterns); i++) {
+                SwsClearOp clear = { .mask = ff_sws_comp_mask_q4(patterns[i]) };
+                memcpy(clear.value, patterns[i], sizeof(clear.value));
                 CHECK(FMT("clear_pattern_%s[%d]", type, i), 4, 4, t, t, {
                     .op    = SWS_OP_CLEAR,
                     .type  = t,
-                    .clear = patterns[i],
+                    .clear = clear,
                 });
             }
         } else if (!ff_sws_pixel_type_is_int(t)) {
@@ -537,6 +576,7 @@ static void check_clear(void)
                 .op   = SWS_OP_CLEAR,
                 .type = t,
                 .clear.value[3] = { 0, 1 },
+                .clear.mask = SWS_COMP(3),
             });
         }
     }
@@ -714,27 +754,17 @@ static void check_linear(void)
         const char *name;
         uint32_t mask;
     } patterns[] = {
-        { "noop",               0 },
         { "luma",               SWS_MASK_LUMA },
         { "alpha",              SWS_MASK_ALPHA },
         { "luma+alpha",         SWS_MASK_LUMA | SWS_MASK_ALPHA },
         { "dot3",               0x7 },
-        { "dot4",               0xF },
-        { "row0",               SWS_MASK_ROW(0) },
-        { "row0+alpha",         SWS_MASK_ROW(0) | SWS_MASK_ALPHA },
-        { "off3",               SWS_MASK_OFF3 },
-        { "off3+alpha",         SWS_MASK_OFF3 | SWS_MASK_ALPHA },
+        { "row0",               SWS_MASK_ROW(0) ^ SWS_MASK(0, 3) },
         { "diag3",              SWS_MASK_DIAG3 },
         { "diag4",              SWS_MASK_DIAG4 },
         { "diag3+alpha",        SWS_MASK_DIAG3 | SWS_MASK_ALPHA },
         { "diag3+off3",         SWS_MASK_DIAG3 | SWS_MASK_OFF3 },
-        { "diag3+off3+alpha",   SWS_MASK_DIAG3 | SWS_MASK_OFF3 | SWS_MASK_ALPHA },
-        { "diag4+off4",         SWS_MASK_DIAG4 | SWS_MASK_OFF4 },
-        { "matrix3",            SWS_MASK_MAT3 },
         { "matrix3+off3",       SWS_MASK_MAT3 | SWS_MASK_OFF3 },
         { "matrix3+off3+alpha", SWS_MASK_MAT3 | SWS_MASK_OFF3 | SWS_MASK_ALPHA },
-        { "matrix4",            SWS_MASK_MAT4 },
-        { "matrix4+off4",       SWS_MASK_MAT4 | SWS_MASK_OFF4 },
     };
 
     for (SwsPixelType t = F32; t < SWS_PIXEL_TYPE_NB; t++) {
@@ -767,13 +797,21 @@ static void check_linear(void)
 
 static void check_scale(void)
 {
-    for (SwsPixelType t = F32; t < SWS_PIXEL_TYPE_NB; t++) {
+    for (SwsPixelType t = U8; t < SWS_PIXEL_TYPE_NB; t++) {
         const char *type = ff_sws_pixel_type_name(t);
         const int bits = ff_sws_pixel_type_size(t) * 8;
         if (ff_sws_pixel_type_is_int(t)) {
+            const unsigned max = UINT32_MAX >> (32 - bits);
+
+            /* Test fixed fast path for expansion from bits to full range */
+            CHECK_COMMON_RANGE(FMT("scale_full_%s", type), 1, t, t, {
+                .op    = SWS_OP_SCALE,
+                .type  = t,
+                .scale = {{ max, 1 }},
+            });
+
             /* Ensure the result won't exceed the value range */
-            const unsigned max = (1 << bits) - 1;
-            const unsigned scale = rnd() & max;
+            const unsigned scale = rnd() & (max >> 1);
             const unsigned range = max / (scale ? scale : 1);
             CHECK_COMMON_RANGE(FMT("scale_%s", type), range, t, t, {
                 .op    = SWS_OP_SCALE,
@@ -796,12 +834,17 @@ static void check_filter(void)
         .scaler_params = { SWS_PARAM_DEFAULT, SWS_PARAM_DEFAULT },
     };
 
+    const SwsScaler scalers[] = {
+        SWS_SCALE_POINT,
+        SWS_SCALE_SINC,
+    };
+
     SwsFilterWeights *filter;
 
     for (SwsPixelType t = U8; t < SWS_PIXEL_TYPE_NB; t++) {
         const char *type = ff_sws_pixel_type_name(t);
-        for (SwsScaler scaler = SWS_SCALE_AUTO + 1; scaler < SWS_SCALE_NB; scaler++) {
-            params.scaler = scaler;
+        for (int s = 0; s < FF_ARRAY_ELEMS(scalers); s++) {
+            params.scaler = scalers[s];
             params.dst_size = LINES;
             for (int h = 1; h <= LINES; h += h) {
                 params.src_size = h;

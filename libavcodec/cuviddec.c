@@ -916,7 +916,7 @@ static av_cold int cuvid_decode_init(AVCodecContext *avctx)
     if (probe_desc && probe_desc->nb_components)
         probed_bit_depth = probe_desc->comp[0].depth;
 
-    if (probe_desc && !probe_desc->log2_chroma_w && !probe_desc->log2_chroma_h)
+    if (probe_desc && probe_desc->nb_components > 1 && !probe_desc->log2_chroma_w && !probe_desc->log2_chroma_h)
         is_yuv444 = 1;
 
 #ifdef NVDEC_HAVE_422_SUPPORT
@@ -1103,7 +1103,7 @@ static av_cold int cuvid_decode_init(AVCodecContext *avctx)
     // Skip first 4 bytes of AV1CodecConfigurationRecord to keep configOBUs
     // only, otherwise cuvidParseVideoData report unknown error.
     if (avctx->codec->id == AV_CODEC_ID_AV1 &&
-            extradata_size > 4 &&
+            extradata_size >= 4 &&
             extradata[0] & 0x80) {
         extradata += 4;
         extradata_size -= 4;

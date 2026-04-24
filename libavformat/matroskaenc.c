@@ -2849,11 +2849,17 @@ static int mkv_write_block(void *logctx, MatroskaMuxContext *mkv,
 {
     const AVCodecParameters *par  = st->codecpar;
     uint8_t t35_buf[6 + AV_HDR_PLUS_MAX_PAYLOAD_SIZE];
+#define SMPTE_2094_APP5_MAX_SIZE 855
+    uint8_t smpte_2094_app5_buf[5 + SMPTE_2094_APP5_MAX_SIZE];
     uint8_t *side_data;
     size_t side_data_size;
     uint64_t additional_id;
     unsigned track_number = track->track_num;
-    EBML_WRITER(12);
+    // BlockGroup, Block, BlockDuration, DiscardPadding, BlockReference
+    // and BlockAdditions with three elements per BlockMore
+    // Don't forget to increment the number of BlockMore when adding
+    // support for writing a new blockadditional.
+    EBML_WRITER(5 + (1 + 3 * 3));
     int ret;
 
     mkv->cur_block.track  = track;
@@ -2920,8 +2926,8 @@ static int mkv_write_block(void *logctx, MatroskaMuxContext *mkv,
     if (par->codec_type == AVMEDIA_TYPE_VIDEO) {
         side_data = av_packet_get_side_data(pkt,
                                             AV_PKT_DATA_DYNAMIC_HDR10_PLUS,
-                                            &side_data_size);
-        if (side_data && side_data_size) {
+                                            NULL);
+        if (side_data) {
             uint8_t *payload = t35_buf;
             size_t payload_size = sizeof(t35_buf) - 6;
 
@@ -2936,6 +2942,27 @@ static int mkv_write_block(void *logctx, MatroskaMuxContext *mkv,
                 return ret;
 
             mkv_write_blockadditional(&writer, t35_buf, payload_size + 6,
+                                      MATROSKA_BLOCK_ADD_ID_ITU_T_T35);
+            track->max_blockaddid = FFMAX(track->max_blockaddid,
+                                          MATROSKA_BLOCK_ADD_ID_ITU_T_T35);
+        }
+        side_data = av_packet_get_side_data(pkt,
+                                            AV_PKT_DATA_DYNAMIC_HDR_SMPTE_2094_APP5,
+                                            NULL);
+        if (side_data) {
+            uint8_t *payload = smpte_2094_app5_buf;
+            size_t payload_size = sizeof(smpte_2094_app5_buf) - 5;
+
+            bytestream_put_byte(&payload, ITU_T_T35_COUNTRY_CODE_US);
+            bytestream_put_be16(&payload, ITU_T_T35_PROVIDER_CODE_SMPTE);
+            bytestream_put_be16(&payload, 0x01); // provider_oriented_code
+
+            ret = av_dynamic_hdr_smpte2094_app5_to_t35((AVDynamicHDRSmpte2094App5 *)side_data,
+                                                       &payload, &payload_size);
+            if (ret < 0)
+                return ret;
+
+            mkv_write_blockadditional(&writer, t35_buf, payload_size + 5,
                                       MATROSKA_BLOCK_ADD_ID_ITU_T_T35);
             track->max_blockaddid = FFMAX(track->max_blockaddid,
                                           MATROSKA_BLOCK_ADD_ID_ITU_T_T35);

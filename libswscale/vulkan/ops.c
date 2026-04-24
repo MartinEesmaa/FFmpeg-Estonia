@@ -25,7 +25,10 @@
 #include "../swscale_internal.h"
 
 #include "ops.h"
+
+#if HAVE_SPIRV_HEADERS_SPIRV_H || HAVE_SPIRV_UNIFIED1_SPIRV_H
 #include "spvasm.h"
+#endif
 
 static void ff_sws_vk_uninit(AVRefStructOpaque opaque, void *obj)
 {
@@ -171,16 +174,18 @@ static int create_dither_bufs(FFVulkanOpsCtx *s, VulkanPriv *p, SwsOpList *ops)
         av_assert0(p->nb_dither_buf + 1 <= MAX_DITHER_BUFS);
 
         int size = (1 << op->dither.size_log2);
-        err = ff_vk_create_buf(&s->vkctx, &p->dither_buf[p->nb_dither_buf],
+        int idx = p->nb_dither_buf;
+        err = ff_vk_create_buf(&s->vkctx, &p->dither_buf[idx],
                                size*size*sizeof(float), NULL, NULL,
                                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
                                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
         if (err < 0)
             goto fail;
+        p->nb_dither_buf++;
 
         float *dither_data;
-        err = ff_vk_map_buffer(&s->vkctx, &p->dither_buf[p->nb_dither_buf],
+        err = ff_vk_map_buffer(&s->vkctx, &p->dither_buf[idx],
                                (uint8_t **)&dither_data, 0);
         if (err < 0)
             goto fail;
@@ -192,8 +197,7 @@ static int create_dither_bufs(FFVulkanOpsCtx *s, VulkanPriv *p, SwsOpList *ops)
             }
         }
 
-        ff_vk_unmap_buffer(&s->vkctx, &p->dither_buf[p->nb_dither_buf], 1);
-        p->nb_dither_buf++;
+        ff_vk_unmap_buffer(&s->vkctx, &p->dither_buf[idx], 1);
     }
 
     return 0;
@@ -204,6 +208,7 @@ fail:
     return err;
 }
 
+#if HAVE_SPIRV_HEADERS_SPIRV_H || HAVE_SPIRV_UNIFIED1_SPIRV_H
 struct DitherData {
         int size;
         int arr_1d_id;
@@ -393,12 +398,14 @@ static void define_shader_consts(SwsOpList *ops, SPICtx *spi, SPIRVIDs *id)
             break;
         case SWS_OP_CLEAR:
             for (int i = 0; i < 4; i++) {
+                if (!SWS_COMP_TEST(op->clear.mask, i))
+                    continue;
                 AVRational cv = op->clear.value[i];
-                if (cv.den && op->type == SWS_PIXEL_F32) {
+                if (op->type == SWS_PIXEL_F32) {
                     float q = (float)cv.num/cv.den;
                     id->const_ids[id->nb_const_ids++] =
                         spi_OpConstantFloat(spi, f32_type, q);
-                } else if (op->clear.value[i].den) {
+                } else {
                     av_assert0(cv.den == 1);
                     id->const_ids[id->nb_const_ids++] =
                         spi_OpConstantUInt(spi, u32_type, cv.num);
@@ -883,6 +890,7 @@ static int add_ops_spirv(VulkanPriv *p, FFVulkanOpsCtx *s,
 
     return ff_vk_shader_link(&s->vkctx, shd, spvbuf, len, "main");
 }
+#endif
 
 #if CONFIG_LIBSHADERC || CONFIG_LIBGLSLANG
 static void add_desc_read_write(FFVulkanDescriptorSetBinding *out_desc,
@@ -1030,7 +1038,7 @@ static int add_ops_glsl(VulkanPriv *p, FFVulkanOpsCtx *s,
         }
         case SWS_OP_CLEAR: {
             for (int i = 0; i < 4; i++) {
-                if (!op->clear.value[i].den)
+                if (!SWS_COMP_TEST(op->clear.mask, i))
                     continue;
                 av_bprintf(&shd->src, "    %s.%c = %s"QSTR";\n", type_name,
                            "xyzw"[i], type_s, QTYPE(op->clear.value[i]));
@@ -1159,19 +1167,18 @@ static int compile(SwsContext *sws, SwsOpList *ops, SwsCompiledOp *out, int glsl
     }
 
     if (glsl) {
+        err = AVERROR(ENOTSUP);
 #if CONFIG_LIBSHADERC || CONFIG_LIBGLSLANG
         err = add_ops_glsl(p, s, ops, &p->shd);
-        if (err < 0)
-            goto fail;
-#else
-        err = AVERROR(ENOTSUP);
-        goto fail;
 #endif
     } else {
+        err = AVERROR(ENOTSUP);
+#if HAVE_SPIRV_HEADERS_SPIRV_H || HAVE_SPIRV_UNIFIED1_SPIRV_H
         err = add_ops_spirv(p, s, ops, &p->shd);
-        if (err < 0)
-            goto fail;
+#endif
     }
+    if (err < 0)
+        goto fail;
 
     err = ff_vk_shader_register_exec(&s->vkctx, &p->e, &p->shd);
     if (err < 0)
@@ -1196,6 +1203,7 @@ fail:
     return err;
 }
 
+#if HAVE_SPIRV_HEADERS_SPIRV_H || HAVE_SPIRV_UNIFIED1_SPIRV_H
 static int compile_spirv(SwsContext *sws, SwsOpList *ops, SwsCompiledOp *out)
 {
     return compile(sws, ops, out, 0);
@@ -1206,6 +1214,7 @@ const SwsOpBackend backend_spirv = {
     .compile   = compile_spirv,
     .hw_format = AV_PIX_FMT_VULKAN,
 };
+#endif
 
 #if CONFIG_LIBSHADERC || CONFIG_LIBGLSLANG
 static int compile_glsl(SwsContext *sws, SwsOpList *ops, SwsCompiledOp *out)

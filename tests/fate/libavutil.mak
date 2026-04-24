@@ -116,6 +116,10 @@ FATE_LIBAVUTIL += fate-lfg
 fate-lfg: libavutil/tests/lfg$(EXESUF)
 fate-lfg: CMD = run libavutil/tests/lfg$(EXESUF)
 
+FATE_LIBAVUTIL += fate-mathematics
+fate-mathematics: libavutil/tests/mathematics$(EXESUF)
+fate-mathematics: CMD = run libavutil/tests/mathematics$(EXESUF)
+
 FATE_LIBAVUTIL += fate-md5
 fate-md5: libavutil/tests/md5$(EXESUF)
 fate-md5: CMD = run libavutil/tests/md5$(EXESUF)
@@ -144,6 +148,10 @@ FATE_LIBAVUTIL += fate-random_seed
 fate-random_seed: libavutil/tests/random_seed$(EXESUF)
 fate-random_seed: CMD = run libavutil/tests/random_seed$(EXESUF)
 
+FATE_LIBAVUTIL += fate-rc4
+fate-rc4: libavutil/tests/rc4$(EXESUF)
+fate-rc4: CMD = run libavutil/tests/rc4$(EXESUF)
+
 FATE_LIBAVUTIL += fate-ripemd
 fate-ripemd: libavutil/tests/ripemd$(EXESUF)
 fate-ripemd: CMD = run libavutil/tests/ripemd$(EXESUF)
@@ -155,6 +163,10 @@ fate-sha: CMD = run libavutil/tests/sha$(EXESUF)
 FATE_LIBAVUTIL += fate-sha512
 fate-sha512: libavutil/tests/sha512$(EXESUF)
 fate-sha512: CMD = run libavutil/tests/sha512$(EXESUF)
+
+FATE_LIBAVUTIL += fate-samplefmt
+fate-samplefmt: libavutil/tests/samplefmt$(EXESUF)
+fate-samplefmt: CMD = run libavutil/tests/samplefmt$(EXESUF)
 
 FATE_LIBAVUTIL += fate-side_data_array
 fate-side_data_array: libavutil/tests/side_data_array$(EXESUF)
@@ -203,6 +215,10 @@ FATE_LIBAVUTIL += fate-file
 fate-file: libavutil/tests/file$(EXESUF)
 fate-file: CMD = run libavutil/tests/file$(EXESUF) $(SRC_PATH)/libavutil/tests/file.c
 fate-file: CMP = null
+
+FATE_LIBAVUTIL += fate-timecode
+fate-timecode: libavutil/tests/timecode$(EXESUF)
+fate-timecode: CMD = run libavutil/tests/timecode$(EXESUF)
 
 FATE_LIBAVUTIL += $(FATE_LIBAVUTIL-yes)
 FATE-$(CONFIG_AVUTIL) += $(FATE_LIBAVUTIL)
