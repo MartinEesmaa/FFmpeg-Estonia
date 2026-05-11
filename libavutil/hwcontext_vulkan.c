@@ -3229,8 +3229,8 @@ static int vulkan_frames_init(AVHWFramesContext *hwfc)
             }
             vk->GetPhysicalDeviceFormatProperties2(dev_hwctx->phys_dev, fmt->fallback[i], &fmtp);
 
-            for (uint32_t i = 0; i < modp.drmFormatModifierCount; ++i) {
-                VkDrmFormatModifierPropertiesEXT *m = &modp.pDrmFormatModifierProperties[i];
+            for (uint32_t j = 0; j < modp.drmFormatModifierCount; ++j) {
+                VkDrmFormatModifierPropertiesEXT *m = &modp.pDrmFormatModifierProperties[j];
                 if (m->drmFormatModifier == drm_mod.drmFormatModifier) {
                     mod_props = m;
                     break;
@@ -3568,7 +3568,7 @@ static int vulkan_map_from_drm_frame_desc(AVHWFramesContext *hwfc, AVVkFrame **f
                         &f->flags, &f->mem[i]);
         if (err) {
             close(idesc.fd);
-            return err;
+            goto fail;
         }
 
         f->size[i] = req2.memoryRequirements.size;
@@ -4914,6 +4914,7 @@ static int vulkan_transfer_data_to(AVHWFramesContext *hwfc, AVFrame *dst,
             (p->vkctx.extensions & FF_VK_EXT_EXTERNAL_FD_SEM))
 #endif
             return vulkan_transfer_data_from_cuda(hwfc, dst, src);
+        av_fallthrough;
 #endif
     default:
         if (src->hw_frames_ctx)
@@ -5034,6 +5035,7 @@ static int vulkan_transfer_data_from(AVHWFramesContext *hwfc, AVFrame *dst,
             (p->vkctx.extensions & FF_VK_EXT_EXTERNAL_FD_SEM))
 #endif
             return vulkan_transfer_data_to_cuda(hwfc, dst, src);
+        av_fallthrough;
 #endif
     default:
         if (dst->hw_frames_ctx)

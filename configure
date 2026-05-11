@@ -2760,7 +2760,9 @@ CONFIG_EXTRA="
     cabac
     cbs
     cbs_apv
+    cbs_apv_lavf
     cbs_av1
+    cbs_av1_lavf
     cbs_h264
     cbs_h265
     cbs_h266
@@ -3763,6 +3765,7 @@ vvc_parser_select="cbs_h266"
 # bitstream_filters
 aac_adtstoasc_bsf_select="adts_header mpeg4audio"
 ahx_to_mp2_bsf_deps="lgpl_gpl"
+apv_metadata_bsf_select="cbs_apv"
 av1_frame_merge_bsf_select="cbs_av1"
 av1_frame_split_bsf_select="cbs_av1"
 av1_metadata_bsf_select="cbs_av1"
@@ -3984,7 +3987,7 @@ mlp_demuxer_select="mlp_parser"
 mmf_muxer_select="riffenc"
 mov_demuxer_select="iso_media riffdec"
 mov_demuxer_suggest="iamfdec zlib"
-mov_muxer_select="iso_media iso_writer riffenc rtpenc_chain vp9_superframe_bsf aac_adtstoasc_bsf ac3_parser"
+mov_muxer_select="cbs_apv_lavf cbs_av1_lavf iso_media iso_writer riffenc rtpenc_chain vp9_superframe_bsf aac_adtstoasc_bsf ac3_parser"
 mov_muxer_suggest="iamfenc"
 mp3_demuxer_select="mpegaudio_parser"
 mp3_muxer_select="mpegaudioheader"

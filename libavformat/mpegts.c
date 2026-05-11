@@ -290,6 +290,8 @@ EXTERN const FFInputFormat ff_mpegts_demuxer;
 static struct Program * get_program(MpegTSContext *ts, unsigned int programid)
 {
     int i;
+    if (!ts)
+        return NULL;
     for (i = 0; i < ts->nb_prg; i++) {
         if (ts->prg[i].id == programid) {
             return &ts->prg[i];
@@ -1849,9 +1851,9 @@ static const uint8_t opus_channel_map[8][8] = {
 };
 
 static int parse_mpeg2_extension_descriptor(AVFormatContext *fc, AVStream *st, int prg_id,
-                                            const uint8_t **pp, const uint8_t *desc_end)
+                                            const uint8_t **pp, const uint8_t *desc_end,
+                                            MpegTSContext *ts)
 {
-    MpegTSContext *ts = fc->priv_data;
     int ext_tag = get8(pp, desc_end);
 
     switch (ext_tag) {
@@ -2281,6 +2283,7 @@ int ff_parse_mpeg2_descriptor(AVFormatContext *fc, AVStream *st, int stream_type
                 sti->need_parsing = AVSTREAM_PARSE_FULL;
                 sti->need_context_update = 1;
             }
+            break;
         }
         if (ext_desc_tag == SUPPLEMENTARY_AUDIO_DESCRIPTOR) {
             int flags;
@@ -2318,22 +2321,14 @@ int ff_parse_mpeg2_descriptor(AVFormatContext *fc, AVStream *st, int stream_type
                 if (language[0])
                     av_dict_set(&st->metadata, "language", language, 0);
             }
+            break;
+        }
+        if (ext_desc_tag == AC4_DESCRIPTOR) {
+            st->codecpar->codec_id = AV_CODEC_ID_AC4;
+            st->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
         }
         break;
     case AC3_DESCRIPTOR:
-        {
-            int component_type_flag = get8(pp, desc_end) & (1 << 7);
-            if (component_type_flag) {
-                int component_type = get8(pp, desc_end);
-                int service_type_mask = 0x38;  // 0b00111000
-                int service_type = ((component_type & service_type_mask) >> 3);
-                if (service_type == 0x02 /* 0b010 */) {
-                    st->disposition |= AV_DISPOSITION_DESCRIPTIONS;
-                    av_log(ts ? ts->stream : fc, AV_LOG_DEBUG, "New track disposition for id %u: %u\n", st->id, st->disposition);
-                }
-            }
-        }
-        break;
     case ENHANCED_AC3_DESCRIPTOR:
         {
             int component_type_flag = get8(pp, desc_end) & (1 << 7);
@@ -2456,7 +2451,7 @@ int ff_parse_mpeg2_descriptor(AVFormatContext *fc, AVStream *st, int stream_type
         break;
     case EXTENSION_DESCRIPTOR: /* descriptor extension */
         {
-            int ret = parse_mpeg2_extension_descriptor(fc, st, prg_id, pp, desc_end);
+            int ret = parse_mpeg2_extension_descriptor(fc, st, prg_id, pp, desc_end, ts);
 
             if (ret < 0)
                 return ret;
