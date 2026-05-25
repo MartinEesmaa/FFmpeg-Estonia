@@ -2,6 +2,7 @@ clean::
 	$(RM) $(CLEANSUFFIXES:%=libavfilter/vulkan/%)
 
 OBJS-$(CONFIG_AVGBLUR_VULKAN_FILTER) += vulkan/avgblur.comp.spv.o
+OBJS-$(CONFIG_BLACKDETECT_VULKAN_FILTER) += vulkan/blackdetect.comp.spv.o
 OBJS-$(CONFIG_BLEND_VULKAN_FILTER) += vulkan/blend.comp.spv.o
 OBJS-$(CONFIG_BWDIF_VULKAN_FILTER) += vulkan/bwdif.comp.spv.o
 OBJS-$(CONFIG_CHROMABER_VULKAN_FILTER) += vulkan/chromaber.comp.spv.o
@@ -15,3 +16,7 @@ OBJS-$(CONFIG_TRANSPOSE_VULKAN_FILTER) += vulkan/transpose.comp.spv.o
 OBJS-$(CONFIG_V360_VULKAN_FILTER) += vulkan/v360.comp.spv.o
 OBJS-$(CONFIG_INTERLACE_VULKAN_FILTER) += vulkan/interlace.comp.spv.o
 OBJS-$(CONFIG_XFADE_VULKAN_FILTER) += vulkan/xfade.comp.spv.o
+OBJS-$(CONFIG_NLMEANS_VULKAN_FILTER) += vulkan/nlmeans_horizontal.comp.spv.o \
+                                        vulkan/nlmeans_vertical.comp.spv.o \
+                                        vulkan/nlmeans_weights.comp.spv.o \
+                                        vulkan/nlmeans_denoise.comp.spv.o

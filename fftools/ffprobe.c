@@ -39,6 +39,7 @@
 #include "libavutil/avutil.h"
 #include "libavutil/bprint.h"
 #include "libavutil/channel_layout.h"
+#include "libavutil/downmix_info.h"
 #include "libavutil/display.h"
 #include "libavutil/film_grain_params.h"
 #include "libavutil/hdr_dynamic_metadata.h"
@@ -344,7 +345,6 @@ static const char *print_input_filename;
 static const AVInputFormat *iformat = NULL;
 static const char *output_filename = NULL;
 
-static const char unit_second_str[]         = "s"    ;
 static const char unit_hertz_str[]          = "Hz"   ;
 static const char unit_byte_str[]           = "byte" ;
 static const char unit_bit_per_second_str[] = "bit/s";
@@ -455,7 +455,9 @@ static void log_callback(void *ptr, int level, const char *fmt, va_list vl)
 #define print_ts(k, v)          avtext_print_ts(tfc, k, v, 0)
 #define print_duration_time(k, v, tb) avtext_print_time(tfc, k, v, tb, 1)
 #define print_duration_ts(k, v)       avtext_print_ts(tfc, k, v, 1)
-#define print_val(k, v, u)      avtext_print_unit_integer(tfc, k, v, u)
+#define print_val(k, v, u)            avtext_print_unit_integer(tfc, k, v, AV_TEXTFORMAT_VALUE_FMT_INT, u)
+#define print_int_fmt(k, v, f, u)     avtext_print_unit_integer(tfc, k, v, f, u)
+#define print_decibel(k, v)           avtext_print_unit_double(tfc, k, v, AV_TEXTFORMAT_VALUE_FMT_DECIBEL, 0)
 
 static void print_integers(AVTextFormatContext *tfc, const char *key,
                            const void *data, int size, const char *format,
@@ -505,6 +507,30 @@ static inline int show_tags(AVTextFormatContext *tfc, AVDictionary *tags, int se
     avtext_print_section_footer(tfc);
 
     return ret;
+}
+
+static void print_downmix_info(AVTextFormatContext *tfc,
+                                      const AVDownmixInfo *downmix_info)
+{
+    switch (downmix_info->preferred_downmix_type) {
+    case AV_DOWNMIX_TYPE_LORO:
+        print_str("preferred_downmix_type", "loro");
+        break;
+    case AV_DOWNMIX_TYPE_LTRT:
+        print_str("preferred_downmix_type", "ltrt");
+        break;
+    case AV_DOWNMIX_TYPE_DPLII:
+        print_str("preferred_downmix_type", "dplII");
+        break;
+    default:
+        print_str("preferred_downmix_type", "unknown");
+        break;
+    }
+    print_decibel("center_mix_level_db", downmix_info->center_mix_level);
+    print_decibel("center_mix_level_ltrt_db", downmix_info->center_mix_level_ltrt);
+    print_decibel("surround_mix_level_db", downmix_info->surround_mix_level);
+    print_decibel("surround_mix_level_ltrt_db", downmix_info->surround_mix_level_ltrt);
+    print_decibel("lfe_mix_level_db", downmix_info->lfe_mix_level);
 }
 
 static void print_displaymatrix(AVTextFormatContext *tfc, const int32_t matrix[9])
@@ -1342,7 +1368,7 @@ static void show_packet(AVTextFormatContext *tfc, InputFile *ifile, AVPacket *pk
     print_time("dts_time",        pkt->dts, &st->time_base);
     print_duration_ts("duration",        pkt->duration);
     print_duration_time("duration_time", pkt->duration, &st->time_base);
-    print_val("size",             pkt->size, unit_byte_str);
+    print_int_fmt("size",         pkt->size, AV_TEXTFORMAT_VALUE_FMT_BYTE, unit_byte_str);
     if (pkt->pos != -1) print_fmt    ("pos", "%"PRId64, pkt->pos);
     else                print_str_opt("pos", "N/A");
     print_fmt("flags", "%c%c%c",      pkt->flags & AV_PKT_FLAG_KEY ? 'K' : '_',
@@ -1402,6 +1428,9 @@ static void show_subtitle(AVTextFormatContext *tfc, AVSubtitle *sub, AVStream *s
     fflush(stdout);
 }
 
+static void print_iamf_param_definition(AVTextFormatContext *tfc, const char *name,
+                                        const AVIAMFParamDefinition *param, SectionID section_id);
+
 static void print_frame_side_data(AVTextFormatContext *tfc,
                                   const AVFrame *frame,
                                   const AVStream *stream)
@@ -1415,7 +1444,9 @@ static void print_frame_side_data(AVTextFormatContext *tfc,
         avtext_print_section_header(tfc, sd, SECTION_ID_FRAME_SIDE_DATA);
         name = av_frame_side_data_name(sd->type);
         print_str("side_data_type", name ? name : "unknown");
-        if (sd->type == AV_FRAME_DATA_DISPLAYMATRIX && sd->size >= 9*4) {
+        if (sd->type == AV_FRAME_DATA_DOWNMIX_INFO) {
+            print_downmix_info(tfc, (AVDownmixInfo *)sd->data);
+        } else if (sd->type == AV_FRAME_DATA_DISPLAYMATRIX && sd->size >= 9*4) {
             print_displaymatrix(tfc, (const int32_t*)sd->data);
         } else if (sd->type == AV_FRAME_DATA_AFD && sd->size > 0) {
             print_int("active_format", *sd->data);
@@ -1464,6 +1495,11 @@ static void print_frame_side_data(AVTextFormatContext *tfc,
             print_int("view_id", *(int*)sd->data);
         } else if (sd->type == AV_FRAME_DATA_EXIF) {
             print_int("size", sd->size);
+        } else if (sd->type == AV_FRAME_DATA_IAMF_MIX_GAIN_PARAM ||
+            sd->type == AV_FRAME_DATA_IAMF_DEMIXING_INFO_PARAM ||
+            sd->type == AV_FRAME_DATA_IAMF_RECON_GAIN_INFO_PARAM) {
+            const AVIAMFParamDefinition *param = (AVIAMFParamDefinition *)sd->data;
+            print_iamf_param_definition(tfc, NULL, param, SECTION_ID_FRAME_SIDE_DATA);
         }
         avtext_print_section_footer(tfc);
     }
@@ -1497,7 +1533,7 @@ static void show_frame(AVTextFormatContext *tfc, AVFrame *frame, AVStream *strea
     print_duration_time("duration_time",     frame->duration, &stream->time_base);
     if (fd && fd->pkt_pos != -1)  print_fmt    ("pkt_pos", "%"PRId64, fd->pkt_pos);
     else                          print_str_opt("pkt_pos", "N/A");
-    if (fd && fd->pkt_size != -1) print_val    ("pkt_size", fd->pkt_size, unit_byte_str);
+    if (fd && fd->pkt_size != -1) print_int_fmt("pkt_size", fd->pkt_size, AV_TEXTFORMAT_VALUE_FMT_BYTE, unit_byte_str);
     else                          print_str_opt("pkt_size", "N/A");
 
     switch (stream->codecpar->codec_type) {
@@ -2155,12 +2191,21 @@ static void print_iamf_param_definition(AVTextFormatContext *tfc, const char *na
                                         const AVIAMFParamDefinition *param, SectionID section_id)
 {
     SectionID subsection_id, parameter_section_id;
-    av_assert0(sections[section_id].children_ids[0] != -1);
-    subsection_id = sections[section_id].children_ids[0];
+    if (section_id == SECTION_ID_FRAME_SIDE_DATA)
+        subsection_id = SECTION_ID_FRAME_SIDE_DATA_COMPONENT_LIST;
+    else {
+        av_assert0(sections[section_id].children_ids[0] != -1);
+        subsection_id = sections[section_id].children_ids[0];
+    }
     av_assert0(sections[subsection_id].children_ids[0] != -1);
     parameter_section_id = sections[subsection_id].children_ids[0];
-    avtext_print_section_header(tfc, "IAMF Param Definition", section_id);
-    print_str("name",           name);
+
+    // When printing as part of side-data, skip opening a section
+    if (section_id != SECTION_ID_FRAME_SIDE_DATA)
+        avtext_print_section_header(tfc, "IAMF Param Definition", section_id);
+
+    if (name)
+        print_str("name",           name);
     print_int("nb_subblocks",   param->nb_subblocks);
     print_int("type",           param->type);
     print_int("parameter_id",   param->parameter_id);
@@ -2203,7 +2248,9 @@ static void print_iamf_param_definition(AVTextFormatContext *tfc, const char *na
     }
     if (param->nb_subblocks > 0)
         avtext_print_section_footer(tfc); // subsection_id
-    avtext_print_section_footer(tfc); // section_id
+
+    if (section_id != SECTION_ID_FRAME_SIDE_DATA)
+        avtext_print_section_footer(tfc); // section_id
 }
 
 static void print_iamf_audio_element_params(AVTextFormatContext *tfc, const AVStreamGroup *stg,
@@ -2429,7 +2476,7 @@ static int show_format(AVTextFormatContext *tfc, InputFile *ifile)
     }
     print_time("start_time",      fmt_ctx->start_time, &AV_TIME_BASE_Q);
     print_time("duration",        fmt_ctx->duration,   &AV_TIME_BASE_Q);
-    if (size >= 0) print_val    ("size", size, unit_byte_str);
+    if (size >= 0) print_int_fmt("size", size, AV_TEXTFORMAT_VALUE_FMT_BYTE, unit_byte_str);
     else           print_str_opt("size", "N/A");
     if (fmt_ctx->bit_rate > 0) print_val    ("bit_rate", fmt_ctx->bit_rate, unit_bit_per_second_str);
     else                       print_str_opt("bit_rate", "N/A");

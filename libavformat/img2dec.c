@@ -602,7 +602,7 @@ const AVOption ff_img_options[] = {
     { "ts_from_file", "set frame timestamp from file's one", OFFSET(ts_from_file), AV_OPT_TYPE_INT,    {.i64 = 0   }, 0, 2,       DEC, .unit = "ts_type" },
     { "none", "none",                   0, AV_OPT_TYPE_CONST,    {.i64 = 0   }, 0, 2,       DEC, .unit = "ts_type" },
     { "sec",  "second precision",       0, AV_OPT_TYPE_CONST,    {.i64 = 1   }, 0, 2,       DEC, .unit = "ts_type" },
-    { "ns",   "nano second precision",  0, AV_OPT_TYPE_CONST,    {.i64 = 2   }, 0, 2,       DEC, .unit = "ts_type" },
+    { "ns",   "nanosecond precision",   0, AV_OPT_TYPE_CONST,    {.i64 = 2   }, 0, 2,       DEC, .unit = "ts_type" },
     { "export_path_metadata", "enable metadata containing input path information", OFFSET(export_path_metadata), AV_OPT_TYPE_BOOL,   {.i64 = 0   }, 0, 1,       DEC }, \
     COMMON_OPTIONS
 };
@@ -1064,7 +1064,7 @@ static int pam_probe(const AVProbeData *p)
 
 static int hdr_probe(const AVProbeData *p)
 {
-    if (!memcmp(p->buf, "#?RADIANCE\n", 11))
+    if (!memcmp(p->buf, "#?RADIANCE\n", 11) || !memcmp(p->buf, "#?RGBE\n", 7))
         return AVPROBE_SCORE_MAX;
     return 0;
 }

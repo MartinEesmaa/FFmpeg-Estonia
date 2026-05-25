@@ -1009,38 +1009,47 @@ void ff_sws_op_list_print(void *log, int lev, int lev_extra,
     av_log(log, lev, "    (X = unused, z = byteswapped, + = exact, 0 = zero)\n");
 }
 
+#define DUMMY_SIZE 16
+
 static int enum_ops_fmt(SwsContext *ctx, void *opaque,
                         enum AVPixelFormat src_fmt, enum AVPixelFormat dst_fmt,
                         int (*cb)(SwsContext *ctx, void *opaque, SwsOpList *ops))
 {
-    int ret;
-    const SwsPixelType type = SWS_PIXEL_F32;
-    SwsOpList *ops = ff_sws_op_list_alloc();
-    if (!ops)
-        return AVERROR(ENOMEM);
+    int ret = 0;
+    SwsOpList *ops = NULL;
+    SwsFormat src, dst;
+    ff_fmt_from_pixfmt(src_fmt, &src);
+    ff_fmt_from_pixfmt(dst_fmt, &dst);
+    bool incomplete = ff_infer_colors(&src.color, &dst.color);
+    src.width = src.height = DUMMY_SIZE;
 
-    ff_fmt_from_pixfmt(src_fmt, &ops->src);
-    ff_fmt_from_pixfmt(dst_fmt, &ops->dst);
-    ops->src.width  = ops->dst.width  = 16;
-    ops->src.height = ops->dst.height = 16;
+    static const int dst_sizes[][2] = {
+        { DUMMY_SIZE,     DUMMY_SIZE     },
+        { DUMMY_SIZE,     DUMMY_SIZE * 2 },
+        { DUMMY_SIZE * 2, DUMMY_SIZE     },
+        { DUMMY_SIZE * 2, DUMMY_SIZE * 2 },
+    };
 
-    bool incomplete = ff_infer_colors(&ops->src.color, &ops->dst.color);
-    if (ff_sws_decode_pixfmt(ops, src_fmt) < 0 ||
-        ff_sws_decode_colors(ctx, type, ops, &ops->src, &incomplete) < 0 ||
-        ff_sws_encode_colors(ctx, type, ops, &ops->src, &ops->dst, &incomplete) < 0 ||
-        ff_sws_encode_pixfmt(ops, dst_fmt) < 0)
-    {
-        ret = 0; /* silently skip unsupported formats */
-        goto fail;
+    for (int i = 0; i < FF_ARRAY_ELEMS(dst_sizes); i++) {
+        dst.width  = dst_sizes[i][0];
+        dst.height = dst_sizes[i][1];
+
+        ret = ff_sws_op_list_generate(ctx, &src, &dst, &ops, &incomplete);
+        if (ret == AVERROR(ENOTSUP))
+            return 0; /* silently skip unsupported formats */
+        else if (ret < 0)
+            return ret;
+
+        ret = ff_sws_op_list_optimize(ops);
+        if (ret < 0)
+            goto fail;
+
+        ret = cb(ctx, opaque, ops);
+        if (ret < 0)
+            goto fail;
+
+        ff_sws_op_list_free(&ops);
     }
-
-    ret = ff_sws_op_list_optimize(ops);
-    if (ret < 0)
-        goto fail;
-
-    ret = cb(ctx, opaque, ops);
-    if (ret < 0)
-        goto fail;
 
 fail:
     ff_sws_op_list_free(&ops);

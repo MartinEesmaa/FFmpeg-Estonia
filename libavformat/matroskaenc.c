@@ -2098,6 +2098,8 @@ static int mkv_write_track(AVFormatContext *s, MatroskaMuxContext *mkv,
         put_ebml_uint(pb, MATROSKA_ID_TRACKTYPE, MATROSKA_TRACK_TYPE_AUDIO);
 
         audio_frame_samples = av_get_audio_frame_duration2(par, 0);
+        if (!audio_frame_samples)
+            audio_frame_samples = par->frame_size;
         if (audio_frame_samples)
             mkv_write_default_duration(track, pb, (AVRational){ audio_frame_samples,
                                                                 par->sample_rate });
@@ -2961,7 +2963,7 @@ static int mkv_write_block(void *logctx, MatroskaMuxContext *mkv,
             if (ret < 0)
                 return ret;
 
-            mkv_write_blockadditional(&writer, t35_buf, payload_size + 5,
+            mkv_write_blockadditional(&writer, smpte_2094_app5_buf, payload_size + 5,
                                       MATROSKA_BLOCK_ADD_ID_ITU_T_T35);
             track->max_blockaddid = FFMAX(track->max_blockaddid,
                                           MATROSKA_BLOCK_ADD_ID_ITU_T_T35);

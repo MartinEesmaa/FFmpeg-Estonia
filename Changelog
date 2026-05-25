@@ -9,6 +9,13 @@ version <next>:
 - HE-AAC 960 decoding (DAB+)
 - transpose_cuda filter
 - Add AMF Frame Rate Converter (vf_frc_amf) filter
+- SMPTE 2094-50 metadata support and passthrough
+- ProRes RAW VideoToolbox hwaccel
+- APV Vulkan hwaccel
+- Animated WebP decoder
+- Animated WebP demuxer
+- Remove CELT decoding support (doesn't affect Opus CELT)
+- Remove ogg/celt parsing
 
 
 version 8.1:

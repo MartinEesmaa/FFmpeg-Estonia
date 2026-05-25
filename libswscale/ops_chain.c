@@ -159,8 +159,7 @@ static int op_match(const SwsOp *op, const SwsOpEntry *entry)
         return op->dither.size_log2 == entry->dither_size ? score : 0;
     case SWS_OP_MIN:
     case SWS_OP_MAX:
-        av_assert1(entry->flexible);
-        break;
+        return score;
     case SWS_OP_LINEAR:
         if (op->lin.mask != entry->linear_mask)
             return 0;
@@ -179,10 +178,9 @@ static int op_match(const SwsOp *op, const SwsOpEntry *entry)
 }
 
 int ff_sws_op_compile_tables(SwsContext *ctx, const SwsOpTable *const tables[],
-                             int num_tables, SwsOpList *ops, int ops_index,
+                             int num_tables, const SwsOp *op,
                              const int block_size, SwsOpChain *chain)
 {
-    const SwsOp *op = &ops->ops[ops_index];
     const unsigned cpu_flags = av_get_cpu_flags();
     const SwsOpEntry *best = NULL;
     const SwsOpTable *best_table = NULL;
