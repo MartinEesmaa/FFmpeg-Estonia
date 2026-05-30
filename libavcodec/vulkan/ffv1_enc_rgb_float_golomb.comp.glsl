@@ -1,4 +1,8 @@
 /*
+ * FFv1 codec
+ *
+ * Copyright (c) 2026 Lynne <dev@lynne.ee>
+ *
  * This file is part of FFmpeg.
  *
  * FFmpeg is free software; you can redistribute it and/or
@@ -16,19 +20,14 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#ifndef AVCODEC_AACENCDSP_H
-#define AVCODEC_AACENCDSP_H
+#pragma shader_stage(compute)
+#extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_shader_image_load_formatted : require
 
-typedef struct AACEncDSPContext {
-    void (*abs_pow34)(float *out, const float *in, const int size);
-    void (*quant_bands)(int *out, const float *in, const float *scaled,
-                        int size, int is_signed, int maxval, const float Q34,
-                        const float rounding);
-} AACEncDSPContext;
+layout (set = 1, binding = 4) uniform uimage2D tmp;
 
-void ff_aacenc_dsp_init(AACEncDSPContext *s);
-void ff_aacenc_dsp_init_riscv(AACEncDSPContext *s);
-void ff_aacenc_dsp_init_x86(AACEncDSPContext *s);
-void ff_aacenc_dsp_init_aarch64(AACEncDSPContext *s);
-
-#endif
+#define PB_UNALIGNED
+#define GOLOMB
+#define FLOAT
+#define RGB
+#include "ffv1_enc.comp.glsl"

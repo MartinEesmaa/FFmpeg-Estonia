@@ -31,6 +31,7 @@
 #include "url.h"
 #include "tls.h"
 #include "libavutil/intreadwrite.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/thread.h"
 #include "libavutil/random_seed.h"
@@ -437,6 +438,7 @@ static ssize_t gnutls_url_pull(gnutls_transport_ptr_t transport,
     URLContext *uc = s->is_dtls ? s->udp : s->tcp;
     int ret = ffurl_read(uc, buf, len);
     if (ret >= 0) {
+#if CONFIG_UDP_PROTOCOL
         if (s->is_dtls && s->listen && !c->dest_addr_len) {
             int err_ret;
 
@@ -448,6 +450,7 @@ static ssize_t gnutls_url_pull(gnutls_transport_ptr_t transport,
             }
             av_log(c, AV_LOG_TRACE, "Set UDP remote addr on UDP socket, now 'connected'\n");
         }
+#endif
         return ret;
     }
     if (ret == AVERROR_EXIT)
@@ -538,6 +541,9 @@ static int tls_open(URLContext *h, const char *uri, int flags, AVDictionary **op
 
     if (!s->external_sock) {
         if ((ret = ff_tls_open_underlying(s, h, uri, options)) < 0)
+            goto fail;
+    } else if (!s->host) {
+        if ((ret = ff_tls_parse_host(s, s->underlying_host, sizeof(s->underlying_host), NULL, uri)) < 0)
             goto fail;
     }
 

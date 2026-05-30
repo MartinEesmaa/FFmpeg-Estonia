@@ -34,13 +34,15 @@ layout (set = 0, binding = 2, scalar) uniform crc_ieee_buf {
 layout (set = 1, binding = 1, scalar) writeonly buffer slice_results_buf {
     uint32_t slice_results[];
 };
-#ifdef FLOAT
-layout (set = 1, binding = 3) uniform image2D src[];
-layout (set = 1, binding = 5) readonly buffer fltmap_buf {
-    uint fltmap[][4][65536];
-};
-#else
+/* Source images are bound as UINT (raw bits) regardless of the underlying
+ * pixel format. Integer formats are passed through unchanged; for float
+ * formats this avoids the fp16/fp32 conversion that would otherwise flush
+ * denormals before we get to look at them. */
 layout (set = 1, binding = 3) uniform uimage2D src[];
+#ifdef FLOAT
+layout (set = 1, binding = 5, scalar) readonly buffer fltmap_buf {
+    uint fltmap[];
+};
 #endif
 
 #ifndef GOLOMB
@@ -149,7 +151,7 @@ PutBitContext pb;
 void init_golomb(void)
 {
     hdr_len = rac_terminate();
-    init_put_bits(pb, OFFBUF(u8buf, rc.bs_start, hdr_len),
+    init_put_bits(pb, OFFBUF(u8buf, slice_data, rc.bs_start + hdr_len),
                   slice_size_max - hdr_len);
 }
 
@@ -164,6 +166,9 @@ void encode_line(in SliceContext sc, readonly uimage2D img, uint state_off,
         w = ceil_rshift(w, chroma_shift.x);
         sp >>= chroma_shift;
     }
+#elif defined(FLOAT)
+    if (bits == 0)
+        return;
 #endif
 
     linecache_load(img, sp, y, comp);
@@ -234,10 +239,24 @@ ivec4 load_components(uint slice_idx, in SliceContext sc, ivec2 pos)
 {
     ivec4 pix;
 #ifdef FLOAT
-    for (int i = 0; i < color_planes; i++) {
-        float16_t v = float16_t(imageLoad(src[i], pos));
-        uint16_t iv = float16BitsToUint16(v);
-        pix[i] = int(fltmap[slice_idx][i][iv]);
+    if (c_bits >= 32) {
+        /* 32-bit float: per-pixel-position bitmap lookup. The bitmap region
+         * follows the units region in the same buffer. */
+        ivec2 rel = pos - sc.slice_pos;
+        uint pixel_idx = uint(rel.x + sc.slice_dim.x*rel.y);
+        uint plane_stride = max_pixels_per_slice*3u;
+        for (int i = 0; i < color_planes; i++) {
+            uint base = (slice_idx*4u + uint(i))*plane_stride
+                        + max_pixels_per_slice*2u;
+            pix[i] = int(fltmap[base + pixel_idx]);
+        }
+    } else {
+        /* 16-bit float: value-indexed lookup. Source view is r16_uint so
+         * imageLoad returns the raw fp16 bit pattern in .x. */
+        for (int i = 0; i < color_planes; i++) {
+            uint iv = imageLoad(src[i], pos)[0] & 0xFFFFu;
+            pix[i] = int(fltmap[(slice_idx*4u + uint(i))*65536u + iv]);
+        }
     }
 #else
     pix = ivec4(imageLoad(src[0], pos));
