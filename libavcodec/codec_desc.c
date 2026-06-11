@@ -3576,6 +3576,13 @@ static const AVCodecDescriptor codec_descriptors[] = {
         .props     = AV_CODEC_PROP_INTRA_ONLY | AV_CODEC_PROP_LOSSY,
     },
     {
+        .id        = AV_CODEC_ID_APPLE_APAC,
+        .type      = AVMEDIA_TYPE_AUDIO,
+        .name      = "apple_apac",
+        .long_name = NULL_IF_CONFIG_SMALL("Apple Positional Audio Codec"),
+        .props     = AV_CODEC_PROP_LOSSY,
+    },
+    {
         .id        = AV_CODEC_ID_SAC,
         .type      = AVMEDIA_TYPE_AUDIO,
         .name      = "sac",

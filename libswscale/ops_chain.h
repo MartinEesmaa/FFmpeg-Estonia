@@ -104,7 +104,10 @@ int ff_sws_op_chain_append(SwsOpChain *chain, SwsFuncPtr func,
 
 typedef struct SwsImplParams {
     const SwsOpTable *table;
-    const SwsOp *op;
+    union {
+        const SwsUOp *uop;
+        const SwsOp *op;
+    };
     SwsContext *ctx;
 } SwsImplParams;
 
@@ -117,22 +120,11 @@ typedef struct SwsImplResult {
 } SwsImplResult;
 
 typedef struct SwsOpEntry {
-    /* Kernel metadata; reduced size subset of SwsOp */
-    SwsOpType op;
+    /* Kernel metadata; reduced size subset of SwsUOp (sans data) */
+    SwsUOpType uop;
     SwsPixelType type;
-    SwsCompMask mask; /* mask of active components (after operation) */
-    bool flexible; /* if true, only the type and op are matched */
-
-    union { /* extra data defining the operation, unless `flexible` is true */
-        SwsReadWriteOp rw;
-        SwsPackOp      pack;
-        SwsSwizzleOp   swizzle;
-        SwsConvertOp   convert;
-        SwsClearOp     clear;
-        uint32_t       linear_mask; /* subset of SwsLinearOp */
-        int            dither_size; /* subset of SwsDitherOp */
-        AVRational     scale;       /* scale factor for SWS_OP_SCALE */
-    };
+    SwsCompMask mask;
+    SwsUOpParams par;
 
     /* Kernel implementation */
     SwsFuncPtr func;
@@ -141,10 +133,13 @@ typedef struct SwsOpEntry {
 } SwsOpEntry;
 
 /* Setup helpers for common/trivial operation types */
-int ff_sws_setup_shift(const SwsImplParams *params, SwsImplResult *out);
 int ff_sws_setup_scale(const SwsImplParams *params, SwsImplResult *out);
 int ff_sws_setup_clamp(const SwsImplParams *params, SwsImplResult *out);
 int ff_sws_setup_clear(const SwsImplParams *params, SwsImplResult *out);
+
+/* Setup helpers for SwsUOp data */
+int ff_sws_setup_scalar(const SwsImplParams *params, SwsImplResult *out);
+int ff_sws_setup_vec4(const SwsImplParams *params, SwsImplResult *out);
 
 static inline void ff_op_priv_free(SwsOpPriv *priv)
 {
@@ -163,13 +158,13 @@ struct SwsOpTable {
 };
 
 /**
- * "Compile" a single op by looking it up in a list of fixed size op tables.
- * See `op_match` in `ops_chain.c` for details on how the matching works.
+ * "Compile" a single uop by looking it up in a list of fixed size uop tables,
+ * in decreasing order of preference.
  *
  * Returns 0 or a negative error code.
  */
-int ff_sws_op_compile_tables(SwsContext *ctx, const SwsOpTable *const tables[],
-                             int num_tables, const SwsOp *op,
-                             const int block_size, SwsOpChain *chain);
+int ff_sws_uop_lookup(SwsContext *ctx, const SwsOpTable *const tables[],
+                      int num_tables, const SwsUOp *uop, const int block_size,
+                      SwsOpChain *chain);
 
 #endif
