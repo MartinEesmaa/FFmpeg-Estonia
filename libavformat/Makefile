@@ -211,6 +211,7 @@ OBJS-$(CONFIG_DVBSUB_DEMUXER)            += dvbsub.o rawdec.o
 OBJS-$(CONFIG_DVBTXT_DEMUXER)            += dvbtxt.o rawdec.o
 OBJS-$(CONFIG_DVDVIDEO_DEMUXER)          += dvdvideodec.o dvdclut.o
 OBJS-$(CONFIG_DXA_DEMUXER)               += dxa.o
+OBJS-$(CONFIG_DYUV_DEMUXER)              += rawvideodec.o
 OBJS-$(CONFIG_EA_CDATA_DEMUXER)          += eacdata.o
 OBJS-$(CONFIG_EA_DEMUXER)                += electronicarts.o
 OBJS-$(CONFIG_EAC3_DEMUXER)              += ac3dec.o rawdec.o
