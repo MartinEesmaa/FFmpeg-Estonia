@@ -753,7 +753,7 @@ static int compute_kernel(AVFilterContext *ctx)
             }
         }
 
-        for (int n = b; n >= a; n--) {
+        for (int n = b - 1; n >= a; n--) {
             if (tkernel[n+range] != 0.f) {
                 if (tkernel[n+range] > FLT_MIN)
                     av_log(ctx, AV_LOG_DEBUG, "out of range kernel %g\n", tkernel[n+range]);
@@ -808,6 +808,7 @@ static int config_output(AVFilterLink *outlink)
     float maximum_frequency = fminf(s->maximum_frequency, limit_frequency);
     float minimum_frequency = s->minimum_frequency;
     float scale = 1.f, factor;
+    double nb_samples;
     int ret;
 
     if (minimum_frequency >= maximum_frequency) {
@@ -877,11 +878,11 @@ static int config_output(AVFilterLink *outlink)
     if (!s->frequency_band)
         return AVERROR(ENOMEM);
 
-    s->nb_consumed_samples = inlink->sample_rate *
-                             frequency_band(s->frequency_band,
-                                            s->frequency_band_count, maximum_frequency - minimum_frequency,
-                                            minimum_frequency, s->frequency_scale, s->deviation);
-    s->nb_consumed_samples = FFMIN(s->nb_consumed_samples, 65536);
+    nb_samples = inlink->sample_rate *
+                 frequency_band(s->frequency_band,
+                                s->frequency_band_count, maximum_frequency - minimum_frequency,
+                                minimum_frequency, s->frequency_scale, s->deviation);
+    s->nb_consumed_samples = av_clip(av_clipd(nb_samples, 1, 65536), 1, 65536);
 
     s->nb_threads = FFMIN(s->frequency_band_count, ff_filter_get_nb_threads(ctx));
     s->nb_channels = inlink->ch_layout.nb_channels;
@@ -1140,7 +1141,7 @@ static int output_frame(AVFilterContext *ctx)
         case DIRECTION_RL:
             for (int p = 0; p < nb_planes; p++) {
                 ptrdiff_t linesize = s->outpicref->linesize[p];
-                const int size = s->w - s->pos;
+                const int size = FFMIN(s->pos + 1, s->sono_size);
                 const int fill = p > 0 && p < 3 ? 128 : 0;
 
                 for (int y = 0; y < s->h; y++) {
@@ -1167,7 +1168,7 @@ static int output_frame(AVFilterContext *ctx)
                 ptrdiff_t linesize = s->outpicref->linesize[p];
                 const int fill = p > 0 && p < 3 ? 128 : 0;
 
-                for (int y = s->h - s->pos; y >= 0; y--) {
+                for (int y = FFMIN(s->pos, s->sono_size - 1); y >= 0; y--) {
                     uint8_t *dst = s->outpicref->data[p] + y * linesize;
 
                     memset(dst, fill, s->w);
