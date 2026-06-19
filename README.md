@@ -13,6 +13,7 @@ Also bringing more codecs and other supports brought by Martin Eesmaa. :)
 * Alpha experimental Dolby E-AC-3 Surround 7.1 encoding support (afterwards, require md71 for finalize muxing)
 * Apple AAC AudioToolbox encoder support for additional Windows support
 * Including external AVS3 video encoder, native QOA audio encoder, external MPEG-H encoder from Ittiam and ADPCM IMA SMJPEG native encoder
+* Nintendo THP Video encoding support with ADPCM
 * Extra decoders included as libvvdec, libmad, Blackmagic RAW, Delta YUV, MotionCam RAW and libcelt.
 * Supports experimental demuxing of State of the Art Audio Codec (SAC)
 
