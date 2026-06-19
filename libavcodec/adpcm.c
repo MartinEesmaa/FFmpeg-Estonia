@@ -245,8 +245,11 @@ static const int8_t mtf_index_table[16] = {
 
 typedef struct ADPCMDecodeContext {
     ADPCMChannelStatus status[14];
+    int table[14][16];
+    int start_skip;
     int vqa_version;                /**< VQA version. Used for ADPCM_IMA_WS */
     int has_status;                 /**< Status flag. Reset to 0 after a flush. */
+    int block_size;                 /**< Block size for THP codecs */
 } ADPCMDecodeContext;
 
 static void adpcm_flush(AVCodecContext *avctx);
@@ -1386,21 +1389,12 @@ static int get_nb_samples(AVCodecContext *avctx, GetByteContext *gb,
     }
     case AV_CODEC_ID_ADPCM_THP:
     case AV_CODEC_ID_ADPCM_THP_LE:
-        if (avctx->extradata) {
-            nb_samples = buf_size * 14 / (8 * ch);
-            break;
-        }
-        has_coded_samples = 1;
-        bytestream2_skip(gb, 4); // channel size
-        *coded_samples  = (avctx->codec->id == AV_CODEC_ID_ADPCM_THP_LE) ?
-                          bytestream2_get_le32(gb) :
-                          bytestream2_get_be32(gb);
-        buf_size       -= 8 + 36 * ch;
-        buf_size       /= ch;
-        nb_samples      = buf_size / 8 * 14;
-        if (buf_size % 8 > 1)
-            nb_samples     += (buf_size % 8 - 1) * 2;
-        *approx_nb_samples = 1;
+        s->block_size = (avctx->codec->id == AV_CODEC_ID_ADPCM_THP_LE) ?
+                        bytestream2_get_le32(gb) :
+                        bytestream2_get_be32(gb);;
+        nb_samples = (avctx->codec->id == AV_CODEC_ID_ADPCM_THP_LE) ?
+                     bytestream2_get_le32(gb) :
+                     bytestream2_get_be32(gb);
         break;
     case AV_CODEC_ID_ADPCM_AFC:
         nb_samples = buf_size / (9 * ch) * 16;
@@ -2525,53 +2519,40 @@ static int adpcm_decode_frame(AVCodecContext *avctx, AVFrame *frame,
 #if CONFIG_ADPCM_THP_DECODER || CONFIG_ADPCM_THP_LE_DECODER
     case AV_CODEC_ID_ADPCM_THP:
     case AV_CODEC_ID_ADPCM_THP_LE:
-    {
-        int table[14][16];
-
 #define THP_GET16(g) \
     sign_extend( \
         avctx->codec->id == AV_CODEC_ID_ADPCM_THP_LE ? \
         bytestream2_get_le16u(&(g)) : \
         bytestream2_get_be16u(&(g)), 16)
 
-        if (avctx->extradata) {
-            GetByteContext tb;
-            if (avctx->extradata_size < 32 * channels) {
-                av_log(avctx, AV_LOG_ERROR, "Missing coeff table\n");
-                return AVERROR_INVALIDDATA;
-            }
+        for (int i = 0; i < channels; i++)
+            for (int n = 0; n < 16; n++)
+                c->table[i][n] = THP_GET16(gb);
 
-            bytestream2_init(&tb, avctx->extradata, avctx->extradata_size);
-            for (int i = 0; i < channels; i++)
-                for (int n = 0; n < 16; n++)
-                    table[i][n] = THP_GET16(tb);
-        } else {
-            for (int i = 0; i < channels; i++)
-                for (int n = 0; n < 16; n++)
-                    table[i][n] = THP_GET16(gb);
-
-            if (!c->has_status) {
-                /* Initialize the previous sample.  */
-                for (int i = 0; i < channels; i++) {
-                    c->status[i].sample1 = THP_GET16(gb);
-                    c->status[i].sample2 = THP_GET16(gb);
-                }
-                c->has_status = 1;
-            } else {
-                bytestream2_skip(&gb, channels * 4);
-            }
+        /* Initialize the previous sample.  */
+        for (int i = 0; i < channels; i++) {
+            c->status[i].sample1 = THP_GET16(gb);
+            c->status[i].sample2 = THP_GET16(gb);
         }
+        c->has_status = 1;
 
+        int pos = bytestream2_tell(&gb);
         for (int ch = 0; ch < channels; ch++) {
             samples = samples_p[ch];
 
+            bytestream2_seek(&gb, pos + c->block_size * ch, SEEK_SET);
+            if (avpkt->pts == 0 && c->start_skip > 0)
+                bytestream2_skip(&gb, c->start_skip);
+
             /* Read in every sample for this channel.  */
-            for (int i = 0; i < (nb_samples + 13) / 14; i++) {
-                int byte = bytestream2_get_byteu(&gb);
-                int index = (byte >> 4) & 7;
-                unsigned int exp = byte & 0x0F;
-                int64_t factor1 = table[ch][index * 2];
-                int64_t factor2 = table[ch][index * 2 + 1];
+            for (int i = 0; i < nb_samples; i++) {
+                int byte = bytestream2_get_byte(&gb);
+                const int index = (byte >> 4) & 0x7;
+                const int scale = 1 << (byte & 0xF);
+                int factor1 = c->table[ch][index * 2];
+                int factor2 = c->table[ch][index * 2 + 1];
+                int sample1 = c->status[ch].sample1;
+                int sample2 = c->status[ch].sample2;
 
                 /* Decode 14 samples.  */
                 for (int n = 0; n < 14 && (i * 14 + n < nb_samples); n++) {
@@ -2580,20 +2561,24 @@ static int adpcm_decode_frame(AVCodecContext *avctx, AVFrame *frame,
                     if (n & 1) {
                         sampledat = sign_extend(byte, 4);
                     } else {
-                        byte = bytestream2_get_byteu(&gb);
+                        byte = bytestream2_get_byte(&gb);
                         sampledat = sign_extend(byte >> 4, 4);
                     }
 
-                    sampledat = ((c->status[ch].sample1 * factor1
-                                + c->status[ch].sample2 * factor2) >> 11) + sampledat * (1 << exp);
+                    sampledat = (sampledat * scale) << 11;
+                    sampledat = ((sample1 * factor1 +
+                                  sample2 * factor2 + 1024 + sampledat) >> 11);
                     *samples = av_clip_int16(sampledat);
-                    c->status[ch].sample2 = c->status[ch].sample1;
-                    c->status[ch].sample1 = *samples++;
+                    sample2 = sample1;
+                    sample1 = *samples++;
                 }
+
+                c->status[ch].sample1 = sample1;
+                c->status[ch].sample2 = sample2;
             }
         }
+        bytestream2_seek(&gb, 0, SEEK_END);
         break;
-    }
 #endif /* CONFIG_ADPCM_THP(_LE)_DECODER */
     CASE(ADPCM_DTK,
         for (int channel = 0; channel < channels; channel++) {
