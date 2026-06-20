@@ -1,6 +1,6 @@
 /*
  * SAC demuxer
- * Copyright (C) 2024 Martin Eesmaa <martin.eesmaa@protonmail.com>
+ * Copyright (C) 2024-2026 Martin Eesmaa <martin.eesmaa@protonmail.com>
  *
  * This file is part of FFmpeg.
  *
@@ -20,6 +20,7 @@
 */
 
 #include "libavutil/intreadwrite.h"
+#include "libavutil/error.h"
 
 #include "avformat.h"
 #include "avio.h"
@@ -45,24 +46,39 @@ static int sac_read_probe(const AVProbeData *p)
 static int sac_read_header(AVFormatContext *s)
 {
     AVStream *st;
-    int srate_hz, channels;
+    int srate_hz, channels, bits_per_sample;
+    int num_samples;
+    int metadata_size;
+    int max_frame_len;
 
     avio_seek(s->pb, 4, SEEK_SET);
     channels = avio_rl16(s->pb);
-    srate_hz = avio_rl16(s->pb);
+    srate_hz = avio_rl32(s->pb);
+    bits_per_sample = avio_rl16(s->pb);
+    num_samples     = avio_rl32(s->pb);
+    max_frame_len   = avio_r8(s->pb);
 
-    // TODO: Add length to make sure the audio duration is correct for samples
+    avio_skip(s->pb, 1); /* reserved byte */
+
+    metadata_size = avio_rl32(s->pb);
 
     st = avformat_new_stream(s, 0);
     if (!st)
         return AVERROR(ENOMEM);
 
-    avpriv_set_pts_info(st, 64, 1, st->codecpar->sample_rate);
-
     st->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
     st->codecpar->codec_id = AV_CODEC_ID_SAC;
     st->codecpar->ch_layout.nb_channels = channels;
     st->codecpar->sample_rate = srate_hz;
+    st->codecpar->bits_per_coded_sample = bits_per_sample;
+
+    avpriv_set_pts_info(st, 64, 1, srate_hz);
+
+    st->duration = num_samples;
+
+    /* Skip metadata block */
+    if (avio_skip(s->pb, metadata_size) < 0)
+        return AVERROR_INVALIDDATA;
 
     return 0;
 }
