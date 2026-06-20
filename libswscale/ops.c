@@ -144,16 +144,17 @@ SwsCompMask ff_sws_comp_mask_q4(const AVRational q[4])
     return mask;
 }
 
-SwsCompMask ff_sws_comp_mask_swizzle(const SwsCompMask mask, const SwsSwizzleOp swiz)
+void ff_sws_comp_mask_swizzle(SwsCompMask *mask, const SwsSwizzleOp *swiz)
 {
+    const SwsCompMask orig = *mask;
     SwsCompMask res = 0;
     for (int i = 0; i < 4; i++) {
-        const int src = swiz.in[i];
-        if (SWS_COMP_TEST(mask, src))
+        const int src = swiz->in[i];
+        if (SWS_COMP_TEST(orig, src))
             res |= SWS_COMP(i);
     }
 
-    return res;
+    *mask = res;
 }
 
 SwsCompMask ff_sws_comp_mask_needed(const SwsOp *op)
@@ -361,7 +362,6 @@ void ff_sws_op_list_update_comps(SwsOpList *ops)
         SwsOp *op = &ops->ops[n];
 
         switch (op->op) {
-        case SWS_OP_READ:
         case SWS_OP_LINEAR:
         case SWS_OP_DITHER:
         case SWS_OP_SWAP_BYTES:
@@ -392,11 +392,6 @@ void ff_sws_op_list_update_comps(SwsOpList *ops)
                 op->comps.flags[i] = ops->comps_src.flags[idx];
                 op->comps.min[i]   = ops->comps_src.min[idx];
                 op->comps.max[i]   = ops->comps_src.max[idx];
-            }
-            for (int i = op->rw.elems; i < 4; i++) {
-                op->comps.flags[i] = prev.flags[i];
-                op->comps.min[i]   = prev.min[i];
-                op->comps.max[i]   = prev.max[i];
             }
 
             if (op->rw.filter.op) {
@@ -773,12 +768,12 @@ int ff_sws_op_list_max_size(const SwsOpList *ops)
     return max_size;
 }
 
-uint32_t ff_sws_linear_mask(const SwsLinearOp c)
+uint32_t ff_sws_linear_mask(const SwsLinearOp *c)
 {
     uint32_t mask = 0;
     for (int i = 0; i < 4; i++) {
         for (int j = 0; j < 5; j++) {
-            if (av_cmp_q(c.m[i][j], Q(i == j)))
+            if (av_cmp_q(c->m[i][j], Q(i == j)))
                 mask |= SWS_MASK(i, j);
         }
     }

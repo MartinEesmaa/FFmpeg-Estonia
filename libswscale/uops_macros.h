@@ -102,67 +102,43 @@
 #define SWS_FOR_STRUCT_U8_WRITE_BIT(MACRO, ...) \
     MACRO(__VA_ARGS__, u8_write_bit_x                          , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_WRITE_BIT       , .mask = 0x1)
 #define SWS_FOR_U8_PERMUTE(MACRO, ...) \
-    MACRO(__VA_ARGS__, u8_permute_x_y                          , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0x1, 1, 0, 2, 3) \
-    MACRO(__VA_ARGS__, u8_permute_x_z                          , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0x1, 2, 1, 0, 3) \
-    MACRO(__VA_ARGS__, u8_permute_x_w                          , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0x1, 3, 1, 2, 0) \
-    MACRO(__VA_ARGS__, u8_permute_y_w                          , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0x2, 0, 3, 2, 1) \
-    MACRO(__VA_ARGS__, u8_permute_y_x                          , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0x2, 1, 0, 2, 3) \
-    MACRO(__VA_ARGS__, u8_permute_xy_yx                        , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0x3, 1, 0, 2, 3) \
-    MACRO(__VA_ARGS__, u8_permute_xy_yw                        , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0x3, 1, 3, 2, 0) \
-    MACRO(__VA_ARGS__, u8_permute_xy_zw                        , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0x3, 2, 3, 0, 1) \
-    MACRO(__VA_ARGS__, u8_permute_xy_wx                        , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0x3, 3, 0, 2, 1) \
-    MACRO(__VA_ARGS__, u8_permute_z_x                          , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0x4, 1, 2, 0, 3) \
-    MACRO(__VA_ARGS__, u8_permute_xz_zx                        , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0x5, 2, 1, 0, 3) \
-    MACRO(__VA_ARGS__, u8_permute_yz_zy                        , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0x6, 0, 2, 1, 3) \
-    MACRO(__VA_ARGS__, u8_permute_xyz_yzx                      , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0x7, 1, 2, 0, 3) \
-    MACRO(__VA_ARGS__, u8_permute_xyz_yzw                      , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0x7, 1, 2, 3, 0) \
-    MACRO(__VA_ARGS__, u8_permute_xyz_zxy                      , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0x7, 2, 0, 1, 3) \
-    MACRO(__VA_ARGS__, u8_permute_xyz_zwy                      , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0x7, 2, 3, 1, 0) \
-    MACRO(__VA_ARGS__, u8_permute_xyz_wzy                      , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0x7, 3, 2, 1, 0) \
-    MACRO(__VA_ARGS__, u8_permute_w_x                          , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0x8, 3, 1, 2, 0) \
-    MACRO(__VA_ARGS__, u8_permute_yw_wy                        , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0xa, 0, 3, 2, 1) \
-    MACRO(__VA_ARGS__, u8_permute_zw_xz                        , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0xc, 3, 1, 0, 2) \
-    MACRO(__VA_ARGS__, u8_permute_xzw_zwx                      , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0xd, 2, 1, 3, 0) \
-    MACRO(__VA_ARGS__, u8_permute_xzw_wxz                      , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0xd, 3, 1, 0, 2) \
-    MACRO(__VA_ARGS__, u8_permute_yzw_zwy                      , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0xe, 0, 2, 3, 1) \
-    MACRO(__VA_ARGS__, u8_permute_yzw_xyz                      , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0xe, 3, 0, 1, 2) \
-    MACRO(__VA_ARGS__, u8_permute_yzw_zxy                      , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0xe, 3, 2, 0, 1) \
-    MACRO(__VA_ARGS__, u8_permute_yzw_zyx                      , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0xe, 3, 2, 1, 0) \
-    MACRO(__VA_ARGS__, u8_permute_xyzw_yzwx                    , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0xf, 1, 2, 3, 0) \
-    MACRO(__VA_ARGS__, u8_permute_xyzw_wxyz                    , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0xf, 3, 0, 1, 2) \
-    MACRO(__VA_ARGS__, u8_permute_xyzw_wzxy                    , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0xf, 3, 2, 0, 1) \
-    MACRO(__VA_ARGS__, u8_permute_xyzw_wzyx                    , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0xf, 3, 2, 1, 0)
+    MACRO(__VA_ARGS__, u8_permute_xzyw                         , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0x0, 0, 2, 1, 3) \
+    MACRO(__VA_ARGS__, u8_permute_xzwy                         , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0x0, 0, 2, 3, 1) \
+    MACRO(__VA_ARGS__, u8_permute_xwzy                         , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0x0, 0, 3, 2, 1) \
+    MACRO(__VA_ARGS__, u8_permute_yxzw                         , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0x0, 1, 0, 2, 3) \
+    MACRO(__VA_ARGS__, u8_permute_yzxw                         , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0x0, 1, 2, 0, 3) \
+    MACRO(__VA_ARGS__, u8_permute_yzwx                         , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0x0, 1, 2, 3, 0) \
+    MACRO(__VA_ARGS__, u8_permute_ywzx                         , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0x0, 1, 3, 2, 0) \
+    MACRO(__VA_ARGS__, u8_permute_zxyw                         , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0x0, 2, 0, 1, 3) \
+    MACRO(__VA_ARGS__, u8_permute_zyxw                         , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0x0, 2, 1, 0, 3) \
+    MACRO(__VA_ARGS__, u8_permute_zywx                         , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0x0, 2, 1, 3, 0) \
+    MACRO(__VA_ARGS__, u8_permute_zwxy                         , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0x0, 2, 3, 0, 1) \
+    MACRO(__VA_ARGS__, u8_permute_zwyx                         , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0x0, 2, 3, 1, 0) \
+    MACRO(__VA_ARGS__, u8_permute_wxyz                         , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0x0, 3, 0, 1, 2) \
+    MACRO(__VA_ARGS__, u8_permute_wxzy                         , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0x0, 3, 0, 2, 1) \
+    MACRO(__VA_ARGS__, u8_permute_wyxz                         , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0x0, 3, 1, 0, 2) \
+    MACRO(__VA_ARGS__, u8_permute_wyzx                         , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0x0, 3, 1, 2, 0) \
+    MACRO(__VA_ARGS__, u8_permute_wzxy                         , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0x0, 3, 2, 0, 1) \
+    MACRO(__VA_ARGS__, u8_permute_wzyx                         , SWS_PIXEL_U8 , SWS_UOP_PERMUTE         , 0x0, 3, 2, 1, 0)
 #define SWS_FOR_STRUCT_U8_PERMUTE(MACRO, ...) \
-    MACRO(__VA_ARGS__, u8_permute_x_y                          , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0x1, .par.swizzle.in = {1, 0, 2, 3}) \
-    MACRO(__VA_ARGS__, u8_permute_x_z                          , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0x1, .par.swizzle.in = {2, 1, 0, 3}) \
-    MACRO(__VA_ARGS__, u8_permute_x_w                          , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0x1, .par.swizzle.in = {3, 1, 2, 0}) \
-    MACRO(__VA_ARGS__, u8_permute_y_w                          , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0x2, .par.swizzle.in = {0, 3, 2, 1}) \
-    MACRO(__VA_ARGS__, u8_permute_y_x                          , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0x2, .par.swizzle.in = {1, 0, 2, 3}) \
-    MACRO(__VA_ARGS__, u8_permute_xy_yx                        , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0x3, .par.swizzle.in = {1, 0, 2, 3}) \
-    MACRO(__VA_ARGS__, u8_permute_xy_yw                        , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0x3, .par.swizzle.in = {1, 3, 2, 0}) \
-    MACRO(__VA_ARGS__, u8_permute_xy_zw                        , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0x3, .par.swizzle.in = {2, 3, 0, 1}) \
-    MACRO(__VA_ARGS__, u8_permute_xy_wx                        , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0x3, .par.swizzle.in = {3, 0, 2, 1}) \
-    MACRO(__VA_ARGS__, u8_permute_z_x                          , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0x4, .par.swizzle.in = {1, 2, 0, 3}) \
-    MACRO(__VA_ARGS__, u8_permute_xz_zx                        , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0x5, .par.swizzle.in = {2, 1, 0, 3}) \
-    MACRO(__VA_ARGS__, u8_permute_yz_zy                        , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0x6, .par.swizzle.in = {0, 2, 1, 3}) \
-    MACRO(__VA_ARGS__, u8_permute_xyz_yzx                      , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0x7, .par.swizzle.in = {1, 2, 0, 3}) \
-    MACRO(__VA_ARGS__, u8_permute_xyz_yzw                      , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0x7, .par.swizzle.in = {1, 2, 3, 0}) \
-    MACRO(__VA_ARGS__, u8_permute_xyz_zxy                      , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0x7, .par.swizzle.in = {2, 0, 1, 3}) \
-    MACRO(__VA_ARGS__, u8_permute_xyz_zwy                      , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0x7, .par.swizzle.in = {2, 3, 1, 0}) \
-    MACRO(__VA_ARGS__, u8_permute_xyz_wzy                      , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0x7, .par.swizzle.in = {3, 2, 1, 0}) \
-    MACRO(__VA_ARGS__, u8_permute_w_x                          , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0x8, .par.swizzle.in = {3, 1, 2, 0}) \
-    MACRO(__VA_ARGS__, u8_permute_yw_wy                        , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0xa, .par.swizzle.in = {0, 3, 2, 1}) \
-    MACRO(__VA_ARGS__, u8_permute_zw_xz                        , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0xc, .par.swizzle.in = {3, 1, 0, 2}) \
-    MACRO(__VA_ARGS__, u8_permute_xzw_zwx                      , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0xd, .par.swizzle.in = {2, 1, 3, 0}) \
-    MACRO(__VA_ARGS__, u8_permute_xzw_wxz                      , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0xd, .par.swizzle.in = {3, 1, 0, 2}) \
-    MACRO(__VA_ARGS__, u8_permute_yzw_zwy                      , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0xe, .par.swizzle.in = {0, 2, 3, 1}) \
-    MACRO(__VA_ARGS__, u8_permute_yzw_xyz                      , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0xe, .par.swizzle.in = {3, 0, 1, 2}) \
-    MACRO(__VA_ARGS__, u8_permute_yzw_zxy                      , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0xe, .par.swizzle.in = {3, 2, 0, 1}) \
-    MACRO(__VA_ARGS__, u8_permute_yzw_zyx                      , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0xe, .par.swizzle.in = {3, 2, 1, 0}) \
-    MACRO(__VA_ARGS__, u8_permute_xyzw_yzwx                    , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0xf, .par.swizzle.in = {1, 2, 3, 0}) \
-    MACRO(__VA_ARGS__, u8_permute_xyzw_wxyz                    , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0xf, .par.swizzle.in = {3, 0, 1, 2}) \
-    MACRO(__VA_ARGS__, u8_permute_xyzw_wzxy                    , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0xf, .par.swizzle.in = {3, 2, 0, 1}) \
-    MACRO(__VA_ARGS__, u8_permute_xyzw_wzyx                    , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0xf, .par.swizzle.in = {3, 2, 1, 0})
+    MACRO(__VA_ARGS__, u8_permute_xzyw                         , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {0, 2, 1, 3}) \
+    MACRO(__VA_ARGS__, u8_permute_xzwy                         , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {0, 2, 3, 1}) \
+    MACRO(__VA_ARGS__, u8_permute_xwzy                         , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {0, 3, 2, 1}) \
+    MACRO(__VA_ARGS__, u8_permute_yxzw                         , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {1, 0, 2, 3}) \
+    MACRO(__VA_ARGS__, u8_permute_yzxw                         , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {1, 2, 0, 3}) \
+    MACRO(__VA_ARGS__, u8_permute_yzwx                         , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {1, 2, 3, 0}) \
+    MACRO(__VA_ARGS__, u8_permute_ywzx                         , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {1, 3, 2, 0}) \
+    MACRO(__VA_ARGS__, u8_permute_zxyw                         , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {2, 0, 1, 3}) \
+    MACRO(__VA_ARGS__, u8_permute_zyxw                         , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {2, 1, 0, 3}) \
+    MACRO(__VA_ARGS__, u8_permute_zywx                         , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {2, 1, 3, 0}) \
+    MACRO(__VA_ARGS__, u8_permute_zwxy                         , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {2, 3, 0, 1}) \
+    MACRO(__VA_ARGS__, u8_permute_zwyx                         , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {2, 3, 1, 0}) \
+    MACRO(__VA_ARGS__, u8_permute_wxyz                         , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {3, 0, 1, 2}) \
+    MACRO(__VA_ARGS__, u8_permute_wxzy                         , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {3, 0, 2, 1}) \
+    MACRO(__VA_ARGS__, u8_permute_wyxz                         , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {3, 1, 0, 2}) \
+    MACRO(__VA_ARGS__, u8_permute_wyzx                         , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {3, 1, 2, 0}) \
+    MACRO(__VA_ARGS__, u8_permute_wzxy                         , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {3, 2, 0, 1}) \
+    MACRO(__VA_ARGS__, u8_permute_wzyx                         , .type = SWS_PIXEL_U8 , .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {3, 2, 1, 0})
 #define SWS_FOR_U8_COPY(MACRO, ...) \
     MACRO(__VA_ARGS__, u8_copy_yz_xx                           , SWS_PIXEL_U8 , SWS_UOP_COPY            , 0x6, 0, 0, 0, 3) \
     MACRO(__VA_ARGS__, u8_copy_yzw_xxx                         , SWS_PIXEL_U8 , SWS_UOP_COPY            , 0xe, 0, 0, 0, 0) \
@@ -440,51 +416,35 @@
 #define SWS_FOR_U16_WRITE_BIT(MACRO, ...)
 #define SWS_FOR_STRUCT_U16_WRITE_BIT(MACRO, ...)
 #define SWS_FOR_U16_PERMUTE(MACRO, ...) \
-    MACRO(__VA_ARGS__, u16_permute_x_y                         , SWS_PIXEL_U16, SWS_UOP_PERMUTE         , 0x1, 1, 0, 2, 3) \
-    MACRO(__VA_ARGS__, u16_permute_x_z                         , SWS_PIXEL_U16, SWS_UOP_PERMUTE         , 0x1, 2, 1, 0, 3) \
-    MACRO(__VA_ARGS__, u16_permute_x_w                         , SWS_PIXEL_U16, SWS_UOP_PERMUTE         , 0x1, 3, 1, 2, 0) \
-    MACRO(__VA_ARGS__, u16_permute_y_w                         , SWS_PIXEL_U16, SWS_UOP_PERMUTE         , 0x2, 0, 3, 2, 1) \
-    MACRO(__VA_ARGS__, u16_permute_y_x                         , SWS_PIXEL_U16, SWS_UOP_PERMUTE         , 0x2, 1, 0, 2, 3) \
-    MACRO(__VA_ARGS__, u16_permute_xy_yx                       , SWS_PIXEL_U16, SWS_UOP_PERMUTE         , 0x3, 1, 0, 2, 3) \
-    MACRO(__VA_ARGS__, u16_permute_xy_wx                       , SWS_PIXEL_U16, SWS_UOP_PERMUTE         , 0x3, 3, 0, 2, 1) \
-    MACRO(__VA_ARGS__, u16_permute_xz_zx                       , SWS_PIXEL_U16, SWS_UOP_PERMUTE         , 0x5, 2, 1, 0, 3) \
-    MACRO(__VA_ARGS__, u16_permute_xz_zw                       , SWS_PIXEL_U16, SWS_UOP_PERMUTE         , 0x5, 2, 1, 3, 0) \
-    MACRO(__VA_ARGS__, u16_permute_xyz_yzx                     , SWS_PIXEL_U16, SWS_UOP_PERMUTE         , 0x7, 1, 2, 0, 3) \
-    MACRO(__VA_ARGS__, u16_permute_xyz_yzw                     , SWS_PIXEL_U16, SWS_UOP_PERMUTE         , 0x7, 1, 2, 3, 0) \
-    MACRO(__VA_ARGS__, u16_permute_xyz_zxy                     , SWS_PIXEL_U16, SWS_UOP_PERMUTE         , 0x7, 2, 0, 1, 3) \
-    MACRO(__VA_ARGS__, u16_permute_xyz_zwy                     , SWS_PIXEL_U16, SWS_UOP_PERMUTE         , 0x7, 2, 3, 1, 0) \
-    MACRO(__VA_ARGS__, u16_permute_xyz_wzy                     , SWS_PIXEL_U16, SWS_UOP_PERMUTE         , 0x7, 3, 2, 1, 0) \
-    MACRO(__VA_ARGS__, u16_permute_w_x                         , SWS_PIXEL_U16, SWS_UOP_PERMUTE         , 0x8, 3, 1, 2, 0) \
-    MACRO(__VA_ARGS__, u16_permute_zw_xz                       , SWS_PIXEL_U16, SWS_UOP_PERMUTE         , 0xc, 3, 1, 0, 2) \
-    MACRO(__VA_ARGS__, u16_permute_yzw_zwy                     , SWS_PIXEL_U16, SWS_UOP_PERMUTE         , 0xe, 0, 2, 3, 1) \
-    MACRO(__VA_ARGS__, u16_permute_yzw_xyz                     , SWS_PIXEL_U16, SWS_UOP_PERMUTE         , 0xe, 3, 0, 1, 2) \
-    MACRO(__VA_ARGS__, u16_permute_yzw_zyx                     , SWS_PIXEL_U16, SWS_UOP_PERMUTE         , 0xe, 3, 2, 1, 0) \
-    MACRO(__VA_ARGS__, u16_permute_xyzw_yzwx                   , SWS_PIXEL_U16, SWS_UOP_PERMUTE         , 0xf, 1, 2, 3, 0) \
-    MACRO(__VA_ARGS__, u16_permute_xyzw_wxyz                   , SWS_PIXEL_U16, SWS_UOP_PERMUTE         , 0xf, 3, 0, 1, 2) \
-    MACRO(__VA_ARGS__, u16_permute_xyzw_wzyx                   , SWS_PIXEL_U16, SWS_UOP_PERMUTE         , 0xf, 3, 2, 1, 0)
+    MACRO(__VA_ARGS__, u16_permute_xzwy                        , SWS_PIXEL_U16, SWS_UOP_PERMUTE         , 0x0, 0, 2, 3, 1) \
+    MACRO(__VA_ARGS__, u16_permute_xwzy                        , SWS_PIXEL_U16, SWS_UOP_PERMUTE         , 0x0, 0, 3, 2, 1) \
+    MACRO(__VA_ARGS__, u16_permute_yxzw                        , SWS_PIXEL_U16, SWS_UOP_PERMUTE         , 0x0, 1, 0, 2, 3) \
+    MACRO(__VA_ARGS__, u16_permute_yzxw                        , SWS_PIXEL_U16, SWS_UOP_PERMUTE         , 0x0, 1, 2, 0, 3) \
+    MACRO(__VA_ARGS__, u16_permute_yzwx                        , SWS_PIXEL_U16, SWS_UOP_PERMUTE         , 0x0, 1, 2, 3, 0) \
+    MACRO(__VA_ARGS__, u16_permute_zxyw                        , SWS_PIXEL_U16, SWS_UOP_PERMUTE         , 0x0, 2, 0, 1, 3) \
+    MACRO(__VA_ARGS__, u16_permute_zyxw                        , SWS_PIXEL_U16, SWS_UOP_PERMUTE         , 0x0, 2, 1, 0, 3) \
+    MACRO(__VA_ARGS__, u16_permute_zywx                        , SWS_PIXEL_U16, SWS_UOP_PERMUTE         , 0x0, 2, 1, 3, 0) \
+    MACRO(__VA_ARGS__, u16_permute_zwyx                        , SWS_PIXEL_U16, SWS_UOP_PERMUTE         , 0x0, 2, 3, 1, 0) \
+    MACRO(__VA_ARGS__, u16_permute_wxyz                        , SWS_PIXEL_U16, SWS_UOP_PERMUTE         , 0x0, 3, 0, 1, 2) \
+    MACRO(__VA_ARGS__, u16_permute_wxzy                        , SWS_PIXEL_U16, SWS_UOP_PERMUTE         , 0x0, 3, 0, 2, 1) \
+    MACRO(__VA_ARGS__, u16_permute_wyxz                        , SWS_PIXEL_U16, SWS_UOP_PERMUTE         , 0x0, 3, 1, 0, 2) \
+    MACRO(__VA_ARGS__, u16_permute_wyzx                        , SWS_PIXEL_U16, SWS_UOP_PERMUTE         , 0x0, 3, 1, 2, 0) \
+    MACRO(__VA_ARGS__, u16_permute_wzyx                        , SWS_PIXEL_U16, SWS_UOP_PERMUTE         , 0x0, 3, 2, 1, 0)
 #define SWS_FOR_STRUCT_U16_PERMUTE(MACRO, ...) \
-    MACRO(__VA_ARGS__, u16_permute_x_y                         , .type = SWS_PIXEL_U16, .uop = SWS_UOP_PERMUTE         , .mask = 0x1, .par.swizzle.in = {1, 0, 2, 3}) \
-    MACRO(__VA_ARGS__, u16_permute_x_z                         , .type = SWS_PIXEL_U16, .uop = SWS_UOP_PERMUTE         , .mask = 0x1, .par.swizzle.in = {2, 1, 0, 3}) \
-    MACRO(__VA_ARGS__, u16_permute_x_w                         , .type = SWS_PIXEL_U16, .uop = SWS_UOP_PERMUTE         , .mask = 0x1, .par.swizzle.in = {3, 1, 2, 0}) \
-    MACRO(__VA_ARGS__, u16_permute_y_w                         , .type = SWS_PIXEL_U16, .uop = SWS_UOP_PERMUTE         , .mask = 0x2, .par.swizzle.in = {0, 3, 2, 1}) \
-    MACRO(__VA_ARGS__, u16_permute_y_x                         , .type = SWS_PIXEL_U16, .uop = SWS_UOP_PERMUTE         , .mask = 0x2, .par.swizzle.in = {1, 0, 2, 3}) \
-    MACRO(__VA_ARGS__, u16_permute_xy_yx                       , .type = SWS_PIXEL_U16, .uop = SWS_UOP_PERMUTE         , .mask = 0x3, .par.swizzle.in = {1, 0, 2, 3}) \
-    MACRO(__VA_ARGS__, u16_permute_xy_wx                       , .type = SWS_PIXEL_U16, .uop = SWS_UOP_PERMUTE         , .mask = 0x3, .par.swizzle.in = {3, 0, 2, 1}) \
-    MACRO(__VA_ARGS__, u16_permute_xz_zx                       , .type = SWS_PIXEL_U16, .uop = SWS_UOP_PERMUTE         , .mask = 0x5, .par.swizzle.in = {2, 1, 0, 3}) \
-    MACRO(__VA_ARGS__, u16_permute_xz_zw                       , .type = SWS_PIXEL_U16, .uop = SWS_UOP_PERMUTE         , .mask = 0x5, .par.swizzle.in = {2, 1, 3, 0}) \
-    MACRO(__VA_ARGS__, u16_permute_xyz_yzx                     , .type = SWS_PIXEL_U16, .uop = SWS_UOP_PERMUTE         , .mask = 0x7, .par.swizzle.in = {1, 2, 0, 3}) \
-    MACRO(__VA_ARGS__, u16_permute_xyz_yzw                     , .type = SWS_PIXEL_U16, .uop = SWS_UOP_PERMUTE         , .mask = 0x7, .par.swizzle.in = {1, 2, 3, 0}) \
-    MACRO(__VA_ARGS__, u16_permute_xyz_zxy                     , .type = SWS_PIXEL_U16, .uop = SWS_UOP_PERMUTE         , .mask = 0x7, .par.swizzle.in = {2, 0, 1, 3}) \
-    MACRO(__VA_ARGS__, u16_permute_xyz_zwy                     , .type = SWS_PIXEL_U16, .uop = SWS_UOP_PERMUTE         , .mask = 0x7, .par.swizzle.in = {2, 3, 1, 0}) \
-    MACRO(__VA_ARGS__, u16_permute_xyz_wzy                     , .type = SWS_PIXEL_U16, .uop = SWS_UOP_PERMUTE         , .mask = 0x7, .par.swizzle.in = {3, 2, 1, 0}) \
-    MACRO(__VA_ARGS__, u16_permute_w_x                         , .type = SWS_PIXEL_U16, .uop = SWS_UOP_PERMUTE         , .mask = 0x8, .par.swizzle.in = {3, 1, 2, 0}) \
-    MACRO(__VA_ARGS__, u16_permute_zw_xz                       , .type = SWS_PIXEL_U16, .uop = SWS_UOP_PERMUTE         , .mask = 0xc, .par.swizzle.in = {3, 1, 0, 2}) \
-    MACRO(__VA_ARGS__, u16_permute_yzw_zwy                     , .type = SWS_PIXEL_U16, .uop = SWS_UOP_PERMUTE         , .mask = 0xe, .par.swizzle.in = {0, 2, 3, 1}) \
-    MACRO(__VA_ARGS__, u16_permute_yzw_xyz                     , .type = SWS_PIXEL_U16, .uop = SWS_UOP_PERMUTE         , .mask = 0xe, .par.swizzle.in = {3, 0, 1, 2}) \
-    MACRO(__VA_ARGS__, u16_permute_yzw_zyx                     , .type = SWS_PIXEL_U16, .uop = SWS_UOP_PERMUTE         , .mask = 0xe, .par.swizzle.in = {3, 2, 1, 0}) \
-    MACRO(__VA_ARGS__, u16_permute_xyzw_yzwx                   , .type = SWS_PIXEL_U16, .uop = SWS_UOP_PERMUTE         , .mask = 0xf, .par.swizzle.in = {1, 2, 3, 0}) \
-    MACRO(__VA_ARGS__, u16_permute_xyzw_wxyz                   , .type = SWS_PIXEL_U16, .uop = SWS_UOP_PERMUTE         , .mask = 0xf, .par.swizzle.in = {3, 0, 1, 2}) \
-    MACRO(__VA_ARGS__, u16_permute_xyzw_wzyx                   , .type = SWS_PIXEL_U16, .uop = SWS_UOP_PERMUTE         , .mask = 0xf, .par.swizzle.in = {3, 2, 1, 0})
+    MACRO(__VA_ARGS__, u16_permute_xzwy                        , .type = SWS_PIXEL_U16, .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {0, 2, 3, 1}) \
+    MACRO(__VA_ARGS__, u16_permute_xwzy                        , .type = SWS_PIXEL_U16, .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {0, 3, 2, 1}) \
+    MACRO(__VA_ARGS__, u16_permute_yxzw                        , .type = SWS_PIXEL_U16, .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {1, 0, 2, 3}) \
+    MACRO(__VA_ARGS__, u16_permute_yzxw                        , .type = SWS_PIXEL_U16, .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {1, 2, 0, 3}) \
+    MACRO(__VA_ARGS__, u16_permute_yzwx                        , .type = SWS_PIXEL_U16, .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {1, 2, 3, 0}) \
+    MACRO(__VA_ARGS__, u16_permute_zxyw                        , .type = SWS_PIXEL_U16, .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {2, 0, 1, 3}) \
+    MACRO(__VA_ARGS__, u16_permute_zyxw                        , .type = SWS_PIXEL_U16, .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {2, 1, 0, 3}) \
+    MACRO(__VA_ARGS__, u16_permute_zywx                        , .type = SWS_PIXEL_U16, .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {2, 1, 3, 0}) \
+    MACRO(__VA_ARGS__, u16_permute_zwyx                        , .type = SWS_PIXEL_U16, .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {2, 3, 1, 0}) \
+    MACRO(__VA_ARGS__, u16_permute_wxyz                        , .type = SWS_PIXEL_U16, .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {3, 0, 1, 2}) \
+    MACRO(__VA_ARGS__, u16_permute_wxzy                        , .type = SWS_PIXEL_U16, .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {3, 0, 2, 1}) \
+    MACRO(__VA_ARGS__, u16_permute_wyxz                        , .type = SWS_PIXEL_U16, .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {3, 1, 0, 2}) \
+    MACRO(__VA_ARGS__, u16_permute_wyzx                        , .type = SWS_PIXEL_U16, .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {3, 1, 2, 0}) \
+    MACRO(__VA_ARGS__, u16_permute_wzyx                        , .type = SWS_PIXEL_U16, .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {3, 2, 1, 0})
 #define SWS_FOR_U16_COPY(MACRO, ...) \
     MACRO(__VA_ARGS__, u16_copy_yz_xx                          , SWS_PIXEL_U16, SWS_UOP_COPY            , 0x6, 0, 0, 0, 3) \
     MACRO(__VA_ARGS__, u16_copy_yzw_xxy                        , SWS_PIXEL_U16, SWS_UOP_COPY            , 0xe, 0, 0, 0, 1)
@@ -744,65 +704,39 @@
 #define SWS_FOR_U32_WRITE_BIT(MACRO, ...)
 #define SWS_FOR_STRUCT_U32_WRITE_BIT(MACRO, ...)
 #define SWS_FOR_U32_PERMUTE(MACRO, ...) \
-    MACRO(__VA_ARGS__, u32_permute_x_y                         , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0x1, 1, 0, 2, 3) \
-    MACRO(__VA_ARGS__, u32_permute_x_z                         , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0x1, 2, 1, 0, 3) \
-    MACRO(__VA_ARGS__, u32_permute_x_w                         , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0x1, 3, 1, 2, 0) \
-    MACRO(__VA_ARGS__, u32_permute_y_w                         , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0x2, 0, 3, 2, 1) \
-    MACRO(__VA_ARGS__, u32_permute_y_x                         , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0x2, 1, 0, 2, 3) \
-    MACRO(__VA_ARGS__, u32_permute_xy_yx                       , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0x3, 1, 0, 2, 3) \
-    MACRO(__VA_ARGS__, u32_permute_z_x                         , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0x4, 1, 2, 0, 3) \
-    MACRO(__VA_ARGS__, u32_permute_xz_zx                       , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0x5, 2, 1, 0, 3) \
-    MACRO(__VA_ARGS__, u32_permute_xz_zw                       , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0x5, 2, 1, 3, 0) \
-    MACRO(__VA_ARGS__, u32_permute_xz_wx                       , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0x5, 3, 1, 0, 2) \
-    MACRO(__VA_ARGS__, u32_permute_yz_zy                       , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0x6, 0, 2, 1, 3) \
-    MACRO(__VA_ARGS__, u32_permute_xyz_yzx                     , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0x7, 1, 2, 0, 3) \
-    MACRO(__VA_ARGS__, u32_permute_xyz_yzw                     , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0x7, 1, 2, 3, 0) \
-    MACRO(__VA_ARGS__, u32_permute_xyz_zxy                     , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0x7, 2, 0, 1, 3) \
-    MACRO(__VA_ARGS__, u32_permute_xyz_zwy                     , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0x7, 2, 3, 1, 0) \
-    MACRO(__VA_ARGS__, u32_permute_xyz_wzy                     , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0x7, 3, 2, 1, 0) \
-    MACRO(__VA_ARGS__, u32_permute_w_y                         , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0x8, 0, 2, 3, 1) \
-    MACRO(__VA_ARGS__, u32_permute_w_x                         , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0x8, 3, 1, 2, 0) \
-    MACRO(__VA_ARGS__, u32_permute_xw_yx                       , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0x9, 1, 2, 3, 0) \
-    MACRO(__VA_ARGS__, u32_permute_yw_wy                       , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0xa, 0, 3, 2, 1) \
-    MACRO(__VA_ARGS__, u32_permute_yw_xy                       , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0xa, 3, 0, 2, 1) \
-    MACRO(__VA_ARGS__, u32_permute_zw_xz                       , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0xc, 3, 1, 0, 2) \
-    MACRO(__VA_ARGS__, u32_permute_yzw_xyz                     , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0xe, 3, 0, 1, 2) \
-    MACRO(__VA_ARGS__, u32_permute_yzw_zxy                     , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0xe, 3, 2, 0, 1) \
-    MACRO(__VA_ARGS__, u32_permute_yzw_zyx                     , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0xe, 3, 2, 1, 0) \
-    MACRO(__VA_ARGS__, u32_permute_xyzw_yzwx                   , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0xf, 1, 2, 3, 0) \
-    MACRO(__VA_ARGS__, u32_permute_xyzw_wxyz                   , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0xf, 3, 0, 1, 2) \
-    MACRO(__VA_ARGS__, u32_permute_xyzw_wzxy                   , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0xf, 3, 2, 0, 1) \
-    MACRO(__VA_ARGS__, u32_permute_xyzw_wzyx                   , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0xf, 3, 2, 1, 0)
+    MACRO(__VA_ARGS__, u32_permute_xzyw                        , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0x0, 0, 2, 1, 3) \
+    MACRO(__VA_ARGS__, u32_permute_xzwy                        , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0x0, 0, 2, 3, 1) \
+    MACRO(__VA_ARGS__, u32_permute_xwzy                        , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0x0, 0, 3, 2, 1) \
+    MACRO(__VA_ARGS__, u32_permute_yxzw                        , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0x0, 1, 0, 2, 3) \
+    MACRO(__VA_ARGS__, u32_permute_yzxw                        , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0x0, 1, 2, 0, 3) \
+    MACRO(__VA_ARGS__, u32_permute_yzwx                        , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0x0, 1, 2, 3, 0) \
+    MACRO(__VA_ARGS__, u32_permute_zxyw                        , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0x0, 2, 0, 1, 3) \
+    MACRO(__VA_ARGS__, u32_permute_zyxw                        , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0x0, 2, 1, 0, 3) \
+    MACRO(__VA_ARGS__, u32_permute_zywx                        , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0x0, 2, 1, 3, 0) \
+    MACRO(__VA_ARGS__, u32_permute_zwyx                        , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0x0, 2, 3, 1, 0) \
+    MACRO(__VA_ARGS__, u32_permute_wxyz                        , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0x0, 3, 0, 1, 2) \
+    MACRO(__VA_ARGS__, u32_permute_wxzy                        , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0x0, 3, 0, 2, 1) \
+    MACRO(__VA_ARGS__, u32_permute_wyxz                        , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0x0, 3, 1, 0, 2) \
+    MACRO(__VA_ARGS__, u32_permute_wyzx                        , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0x0, 3, 1, 2, 0) \
+    MACRO(__VA_ARGS__, u32_permute_wzxy                        , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0x0, 3, 2, 0, 1) \
+    MACRO(__VA_ARGS__, u32_permute_wzyx                        , SWS_PIXEL_U32, SWS_UOP_PERMUTE         , 0x0, 3, 2, 1, 0)
 #define SWS_FOR_STRUCT_U32_PERMUTE(MACRO, ...) \
-    MACRO(__VA_ARGS__, u32_permute_x_y                         , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0x1, .par.swizzle.in = {1, 0, 2, 3}) \
-    MACRO(__VA_ARGS__, u32_permute_x_z                         , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0x1, .par.swizzle.in = {2, 1, 0, 3}) \
-    MACRO(__VA_ARGS__, u32_permute_x_w                         , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0x1, .par.swizzle.in = {3, 1, 2, 0}) \
-    MACRO(__VA_ARGS__, u32_permute_y_w                         , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0x2, .par.swizzle.in = {0, 3, 2, 1}) \
-    MACRO(__VA_ARGS__, u32_permute_y_x                         , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0x2, .par.swizzle.in = {1, 0, 2, 3}) \
-    MACRO(__VA_ARGS__, u32_permute_xy_yx                       , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0x3, .par.swizzle.in = {1, 0, 2, 3}) \
-    MACRO(__VA_ARGS__, u32_permute_z_x                         , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0x4, .par.swizzle.in = {1, 2, 0, 3}) \
-    MACRO(__VA_ARGS__, u32_permute_xz_zx                       , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0x5, .par.swizzle.in = {2, 1, 0, 3}) \
-    MACRO(__VA_ARGS__, u32_permute_xz_zw                       , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0x5, .par.swizzle.in = {2, 1, 3, 0}) \
-    MACRO(__VA_ARGS__, u32_permute_xz_wx                       , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0x5, .par.swizzle.in = {3, 1, 0, 2}) \
-    MACRO(__VA_ARGS__, u32_permute_yz_zy                       , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0x6, .par.swizzle.in = {0, 2, 1, 3}) \
-    MACRO(__VA_ARGS__, u32_permute_xyz_yzx                     , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0x7, .par.swizzle.in = {1, 2, 0, 3}) \
-    MACRO(__VA_ARGS__, u32_permute_xyz_yzw                     , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0x7, .par.swizzle.in = {1, 2, 3, 0}) \
-    MACRO(__VA_ARGS__, u32_permute_xyz_zxy                     , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0x7, .par.swizzle.in = {2, 0, 1, 3}) \
-    MACRO(__VA_ARGS__, u32_permute_xyz_zwy                     , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0x7, .par.swizzle.in = {2, 3, 1, 0}) \
-    MACRO(__VA_ARGS__, u32_permute_xyz_wzy                     , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0x7, .par.swizzle.in = {3, 2, 1, 0}) \
-    MACRO(__VA_ARGS__, u32_permute_w_y                         , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0x8, .par.swizzle.in = {0, 2, 3, 1}) \
-    MACRO(__VA_ARGS__, u32_permute_w_x                         , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0x8, .par.swizzle.in = {3, 1, 2, 0}) \
-    MACRO(__VA_ARGS__, u32_permute_xw_yx                       , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0x9, .par.swizzle.in = {1, 2, 3, 0}) \
-    MACRO(__VA_ARGS__, u32_permute_yw_wy                       , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0xa, .par.swizzle.in = {0, 3, 2, 1}) \
-    MACRO(__VA_ARGS__, u32_permute_yw_xy                       , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0xa, .par.swizzle.in = {3, 0, 2, 1}) \
-    MACRO(__VA_ARGS__, u32_permute_zw_xz                       , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0xc, .par.swizzle.in = {3, 1, 0, 2}) \
-    MACRO(__VA_ARGS__, u32_permute_yzw_xyz                     , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0xe, .par.swizzle.in = {3, 0, 1, 2}) \
-    MACRO(__VA_ARGS__, u32_permute_yzw_zxy                     , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0xe, .par.swizzle.in = {3, 2, 0, 1}) \
-    MACRO(__VA_ARGS__, u32_permute_yzw_zyx                     , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0xe, .par.swizzle.in = {3, 2, 1, 0}) \
-    MACRO(__VA_ARGS__, u32_permute_xyzw_yzwx                   , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0xf, .par.swizzle.in = {1, 2, 3, 0}) \
-    MACRO(__VA_ARGS__, u32_permute_xyzw_wxyz                   , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0xf, .par.swizzle.in = {3, 0, 1, 2}) \
-    MACRO(__VA_ARGS__, u32_permute_xyzw_wzxy                   , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0xf, .par.swizzle.in = {3, 2, 0, 1}) \
-    MACRO(__VA_ARGS__, u32_permute_xyzw_wzyx                   , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0xf, .par.swizzle.in = {3, 2, 1, 0})
+    MACRO(__VA_ARGS__, u32_permute_xzyw                        , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {0, 2, 1, 3}) \
+    MACRO(__VA_ARGS__, u32_permute_xzwy                        , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {0, 2, 3, 1}) \
+    MACRO(__VA_ARGS__, u32_permute_xwzy                        , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {0, 3, 2, 1}) \
+    MACRO(__VA_ARGS__, u32_permute_yxzw                        , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {1, 0, 2, 3}) \
+    MACRO(__VA_ARGS__, u32_permute_yzxw                        , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {1, 2, 0, 3}) \
+    MACRO(__VA_ARGS__, u32_permute_yzwx                        , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {1, 2, 3, 0}) \
+    MACRO(__VA_ARGS__, u32_permute_zxyw                        , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {2, 0, 1, 3}) \
+    MACRO(__VA_ARGS__, u32_permute_zyxw                        , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {2, 1, 0, 3}) \
+    MACRO(__VA_ARGS__, u32_permute_zywx                        , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {2, 1, 3, 0}) \
+    MACRO(__VA_ARGS__, u32_permute_zwyx                        , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {2, 3, 1, 0}) \
+    MACRO(__VA_ARGS__, u32_permute_wxyz                        , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {3, 0, 1, 2}) \
+    MACRO(__VA_ARGS__, u32_permute_wxzy                        , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {3, 0, 2, 1}) \
+    MACRO(__VA_ARGS__, u32_permute_wyxz                        , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {3, 1, 0, 2}) \
+    MACRO(__VA_ARGS__, u32_permute_wyzx                        , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {3, 1, 2, 0}) \
+    MACRO(__VA_ARGS__, u32_permute_wzxy                        , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {3, 2, 0, 1}) \
+    MACRO(__VA_ARGS__, u32_permute_wzyx                        , .type = SWS_PIXEL_U32, .uop = SWS_UOP_PERMUTE         , .mask = 0x0, .par.swizzle.in = {3, 2, 1, 0})
 #define SWS_FOR_U32_COPY(MACRO, ...) \
     MACRO(__VA_ARGS__, u32_copy_yz_xx                          , SWS_PIXEL_U32, SWS_UOP_COPY            , 0x6, 0, 0, 0, 3) \
     MACRO(__VA_ARGS__, u32_copy_yzw_xxx                        , SWS_PIXEL_U32, SWS_UOP_COPY            , 0xe, 0, 0, 0, 0) \
@@ -1177,8 +1111,6 @@
     MACRO(__VA_ARGS__, f32_linear_xyzw_x0000_0x000_00x00_000x0 , .type = SWS_PIXEL_F32, .uop = SWS_UOP_LINEAR          , .mask = 0xf, .par.lin.one = 0x0, .par.lin.zero = 0xbefbe)
 #define SWS_FOR_F32_LINEAR_FMA(MACRO, ...) \
     MACRO(__VA_ARGS__, f32_linear_fma_x_xxx0x                  , SWS_PIXEL_F32, SWS_UOP_LINEAR_FMA      , 0x1, 0x41040, 0xbefa8, 0xfffe8) \
-    MACRO(__VA_ARGS__, f32_linear_fma_x_XXx0x                  , SWS_PIXEL_F32, SWS_UOP_LINEAR_FMA      , 0x1, 0x41040, 0xbefa8, 0xfffeb) \
-    MACRO(__VA_ARGS__, f32_linear_fma_x_xXX0x                  , SWS_PIXEL_F32, SWS_UOP_LINEAR_FMA      , 0x1, 0x41040, 0xbefa8, 0xfffee) \
     MACRO(__VA_ARGS__, f32_linear_fma_x_XXX0x                  , SWS_PIXEL_F32, SWS_UOP_LINEAR_FMA      , 0x1, 0x41040, 0xbefa8, 0xfffef) \
     MACRO(__VA_ARGS__, f32_linear_fma_x_x000x                  , SWS_PIXEL_F32, SWS_UOP_LINEAR_FMA      , 0x1, 0x41040, 0xbefae, 0xfffee) \
     MACRO(__VA_ARGS__, f32_linear_fma_x_X000x                  , SWS_PIXEL_F32, SWS_UOP_LINEAR_FMA      , 0x1, 0x41040, 0xbefae, 0xfffef) \
@@ -1188,18 +1120,12 @@
     MACRO(__VA_ARGS__, f32_linear_fma_x_xXX00                  , SWS_PIXEL_F32, SWS_UOP_LINEAR_FMA      , 0x1, 0x41040, 0xbefb8, 0xffffe) \
     MACRO(__VA_ARGS__, f32_linear_fma_y_0x000                  , SWS_PIXEL_F32, SWS_UOP_LINEAR_FMA      , 0x2, 0x41001, 0xbefbe, 0xfffbf) \
     MACRO(__VA_ARGS__, f32_linear_fma_xyz_xxx0x_xxx0x_xxx0x    , SWS_PIXEL_F32, SWS_UOP_LINEAR_FMA      , 0x7, 0x40000, 0xba108, 0xfa108) \
-    MACRO(__VA_ARGS__, f32_linear_fma_xyz_XXx0x_XXx0x_XXx0x    , SWS_PIXEL_F32, SWS_UOP_LINEAR_FMA      , 0x7, 0x40000, 0xba108, 0xfad6b) \
     MACRO(__VA_ARGS__, f32_linear_fma_xyz_XXX0x_XxX0x_XXX0x    , SWS_PIXEL_F32, SWS_UOP_LINEAR_FMA      , 0x7, 0x40000, 0xba108, 0xfbdaf) \
-    MACRO(__VA_ARGS__, f32_linear_fma_xyz_xXX0x_xXX0x_xXX0x    , SWS_PIXEL_F32, SWS_UOP_LINEAR_FMA      , 0x7, 0x40000, 0xba108, 0xfb9ce) \
     MACRO(__VA_ARGS__, f32_linear_fma_xyz_XXX0x_XXX0x_XXX0x    , SWS_PIXEL_F32, SWS_UOP_LINEAR_FMA      , 0x7, 0x40000, 0xba108, 0xfbdef) \
-    MACRO(__VA_ARGS__, f32_linear_fma_xyz_x0x0x_xxx0x_xx00x    , SWS_PIXEL_F32, SWS_UOP_LINEAR_FMA      , 0x7, 0x40000, 0xbb10a, 0xfb10a) \
     MACRO(__VA_ARGS__, f32_linear_fma_xyz_X0X0x_XXX0x_XX00x    , SWS_PIXEL_F32, SWS_UOP_LINEAR_FMA      , 0x7, 0x40000, 0xbb10a, 0xfbdef) \
     MACRO(__VA_ARGS__, f32_linear_fma_xyz_xxx00_xxx0x_xxx0x    , SWS_PIXEL_F32, SWS_UOP_LINEAR_FMA      , 0x7, 0x40000, 0xba118, 0xfa118) \
-    MACRO(__VA_ARGS__, f32_linear_fma_xyz_xXx00_XXx0x_XXx0x    , SWS_PIXEL_F32, SWS_UOP_LINEAR_FMA      , 0x7, 0x40000, 0xba118, 0xfad7a) \
     MACRO(__VA_ARGS__, f32_linear_fma_xyz_xXX00_XxX0x_XXX0x    , SWS_PIXEL_F32, SWS_UOP_LINEAR_FMA      , 0x7, 0x40000, 0xba118, 0xfbdbe) \
-    MACRO(__VA_ARGS__, f32_linear_fma_xyz_xXX00_xXX0x_xXX0x    , SWS_PIXEL_F32, SWS_UOP_LINEAR_FMA      , 0x7, 0x40000, 0xba118, 0xfb9de) \
     MACRO(__VA_ARGS__, f32_linear_fma_xyz_xXX00_XXX0x_XXX0x    , SWS_PIXEL_F32, SWS_UOP_LINEAR_FMA      , 0x7, 0x40000, 0xba118, 0xfbdfe) \
-    MACRO(__VA_ARGS__, f32_linear_fma_xyz_x000x_0x00x_00x0x    , SWS_PIXEL_F32, SWS_UOP_LINEAR_FMA      , 0x7, 0x40000, 0xbadae, 0xfadae) \
     MACRO(__VA_ARGS__, f32_linear_fma_xyz_X000x_0X00x_00X0x    , SWS_PIXEL_F32, SWS_UOP_LINEAR_FMA      , 0x7, 0x40000, 0xbadae, 0xfbdef) \
     MACRO(__VA_ARGS__, f32_linear_fma_xyz_x0000_0x000_00x00    , SWS_PIXEL_F32, SWS_UOP_LINEAR_FMA      , 0x7, 0x40000, 0xbefbe, 0xfefbe) \
     MACRO(__VA_ARGS__, f32_linear_fma_xyz_10X0x_1XX0x_1X00x    , SWS_PIXEL_F32, SWS_UOP_LINEAR_FMA      , 0x7, 0x40421, 0xbb10a, 0xfbdef) \
@@ -1214,8 +1140,6 @@
     MACRO(__VA_ARGS__, f32_linear_fma_xyzw_x0000_0x000_00x00_000x0, SWS_PIXEL_F32, SWS_UOP_LINEAR_FMA      , 0xf, 0x00000, 0xbefbe, 0xbefbe)
 #define SWS_FOR_STRUCT_F32_LINEAR_FMA(MACRO, ...) \
     MACRO(__VA_ARGS__, f32_linear_fma_x_xxx0x                  , .type = SWS_PIXEL_F32, .uop = SWS_UOP_LINEAR_FMA      , .mask = 0x1, .par.lin.one = 0x41040, .par.lin.zero = 0xbefa8, .par.lin.exact = 0xfffe8) \
-    MACRO(__VA_ARGS__, f32_linear_fma_x_XXx0x                  , .type = SWS_PIXEL_F32, .uop = SWS_UOP_LINEAR_FMA      , .mask = 0x1, .par.lin.one = 0x41040, .par.lin.zero = 0xbefa8, .par.lin.exact = 0xfffeb) \
-    MACRO(__VA_ARGS__, f32_linear_fma_x_xXX0x                  , .type = SWS_PIXEL_F32, .uop = SWS_UOP_LINEAR_FMA      , .mask = 0x1, .par.lin.one = 0x41040, .par.lin.zero = 0xbefa8, .par.lin.exact = 0xfffee) \
     MACRO(__VA_ARGS__, f32_linear_fma_x_XXX0x                  , .type = SWS_PIXEL_F32, .uop = SWS_UOP_LINEAR_FMA      , .mask = 0x1, .par.lin.one = 0x41040, .par.lin.zero = 0xbefa8, .par.lin.exact = 0xfffef) \
     MACRO(__VA_ARGS__, f32_linear_fma_x_x000x                  , .type = SWS_PIXEL_F32, .uop = SWS_UOP_LINEAR_FMA      , .mask = 0x1, .par.lin.one = 0x41040, .par.lin.zero = 0xbefae, .par.lin.exact = 0xfffee) \
     MACRO(__VA_ARGS__, f32_linear_fma_x_X000x                  , .type = SWS_PIXEL_F32, .uop = SWS_UOP_LINEAR_FMA      , .mask = 0x1, .par.lin.one = 0x41040, .par.lin.zero = 0xbefae, .par.lin.exact = 0xfffef) \
@@ -1225,18 +1149,12 @@
     MACRO(__VA_ARGS__, f32_linear_fma_x_xXX00                  , .type = SWS_PIXEL_F32, .uop = SWS_UOP_LINEAR_FMA      , .mask = 0x1, .par.lin.one = 0x41040, .par.lin.zero = 0xbefb8, .par.lin.exact = 0xffffe) \
     MACRO(__VA_ARGS__, f32_linear_fma_y_0x000                  , .type = SWS_PIXEL_F32, .uop = SWS_UOP_LINEAR_FMA      , .mask = 0x2, .par.lin.one = 0x41001, .par.lin.zero = 0xbefbe, .par.lin.exact = 0xfffbf) \
     MACRO(__VA_ARGS__, f32_linear_fma_xyz_xxx0x_xxx0x_xxx0x    , .type = SWS_PIXEL_F32, .uop = SWS_UOP_LINEAR_FMA      , .mask = 0x7, .par.lin.one = 0x40000, .par.lin.zero = 0xba108, .par.lin.exact = 0xfa108) \
-    MACRO(__VA_ARGS__, f32_linear_fma_xyz_XXx0x_XXx0x_XXx0x    , .type = SWS_PIXEL_F32, .uop = SWS_UOP_LINEAR_FMA      , .mask = 0x7, .par.lin.one = 0x40000, .par.lin.zero = 0xba108, .par.lin.exact = 0xfad6b) \
     MACRO(__VA_ARGS__, f32_linear_fma_xyz_XXX0x_XxX0x_XXX0x    , .type = SWS_PIXEL_F32, .uop = SWS_UOP_LINEAR_FMA      , .mask = 0x7, .par.lin.one = 0x40000, .par.lin.zero = 0xba108, .par.lin.exact = 0xfbdaf) \
-    MACRO(__VA_ARGS__, f32_linear_fma_xyz_xXX0x_xXX0x_xXX0x    , .type = SWS_PIXEL_F32, .uop = SWS_UOP_LINEAR_FMA      , .mask = 0x7, .par.lin.one = 0x40000, .par.lin.zero = 0xba108, .par.lin.exact = 0xfb9ce) \
     MACRO(__VA_ARGS__, f32_linear_fma_xyz_XXX0x_XXX0x_XXX0x    , .type = SWS_PIXEL_F32, .uop = SWS_UOP_LINEAR_FMA      , .mask = 0x7, .par.lin.one = 0x40000, .par.lin.zero = 0xba108, .par.lin.exact = 0xfbdef) \
-    MACRO(__VA_ARGS__, f32_linear_fma_xyz_x0x0x_xxx0x_xx00x    , .type = SWS_PIXEL_F32, .uop = SWS_UOP_LINEAR_FMA      , .mask = 0x7, .par.lin.one = 0x40000, .par.lin.zero = 0xbb10a, .par.lin.exact = 0xfb10a) \
     MACRO(__VA_ARGS__, f32_linear_fma_xyz_X0X0x_XXX0x_XX00x    , .type = SWS_PIXEL_F32, .uop = SWS_UOP_LINEAR_FMA      , .mask = 0x7, .par.lin.one = 0x40000, .par.lin.zero = 0xbb10a, .par.lin.exact = 0xfbdef) \
     MACRO(__VA_ARGS__, f32_linear_fma_xyz_xxx00_xxx0x_xxx0x    , .type = SWS_PIXEL_F32, .uop = SWS_UOP_LINEAR_FMA      , .mask = 0x7, .par.lin.one = 0x40000, .par.lin.zero = 0xba118, .par.lin.exact = 0xfa118) \
-    MACRO(__VA_ARGS__, f32_linear_fma_xyz_xXx00_XXx0x_XXx0x    , .type = SWS_PIXEL_F32, .uop = SWS_UOP_LINEAR_FMA      , .mask = 0x7, .par.lin.one = 0x40000, .par.lin.zero = 0xba118, .par.lin.exact = 0xfad7a) \
     MACRO(__VA_ARGS__, f32_linear_fma_xyz_xXX00_XxX0x_XXX0x    , .type = SWS_PIXEL_F32, .uop = SWS_UOP_LINEAR_FMA      , .mask = 0x7, .par.lin.one = 0x40000, .par.lin.zero = 0xba118, .par.lin.exact = 0xfbdbe) \
-    MACRO(__VA_ARGS__, f32_linear_fma_xyz_xXX00_xXX0x_xXX0x    , .type = SWS_PIXEL_F32, .uop = SWS_UOP_LINEAR_FMA      , .mask = 0x7, .par.lin.one = 0x40000, .par.lin.zero = 0xba118, .par.lin.exact = 0xfb9de) \
     MACRO(__VA_ARGS__, f32_linear_fma_xyz_xXX00_XXX0x_XXX0x    , .type = SWS_PIXEL_F32, .uop = SWS_UOP_LINEAR_FMA      , .mask = 0x7, .par.lin.one = 0x40000, .par.lin.zero = 0xba118, .par.lin.exact = 0xfbdfe) \
-    MACRO(__VA_ARGS__, f32_linear_fma_xyz_x000x_0x00x_00x0x    , .type = SWS_PIXEL_F32, .uop = SWS_UOP_LINEAR_FMA      , .mask = 0x7, .par.lin.one = 0x40000, .par.lin.zero = 0xbadae, .par.lin.exact = 0xfadae) \
     MACRO(__VA_ARGS__, f32_linear_fma_xyz_X000x_0X00x_00X0x    , .type = SWS_PIXEL_F32, .uop = SWS_UOP_LINEAR_FMA      , .mask = 0x7, .par.lin.one = 0x40000, .par.lin.zero = 0xbadae, .par.lin.exact = 0xfbdef) \
     MACRO(__VA_ARGS__, f32_linear_fma_xyz_x0000_0x000_00x00    , .type = SWS_PIXEL_F32, .uop = SWS_UOP_LINEAR_FMA      , .mask = 0x7, .par.lin.one = 0x40000, .par.lin.zero = 0xbefbe, .par.lin.exact = 0xfefbe) \
     MACRO(__VA_ARGS__, f32_linear_fma_xyz_10X0x_1XX0x_1X00x    , .type = SWS_PIXEL_F32, .uop = SWS_UOP_LINEAR_FMA      , .mask = 0x7, .par.lin.one = 0x40421, .par.lin.zero = 0xbb10a, .par.lin.exact = 0xfbdef) \
