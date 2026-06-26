@@ -24,7 +24,7 @@
 #include "libavutil/log.h"
 #include "libavutil/mem.h"
 
-#include "libavcodec/packet_internal.h"
+#include "packet_internal.h"
 #include "avformat.h"
 #include "avio_internal.h"
 #include "internal.h"
@@ -129,14 +129,14 @@ static int write_packet(AVFormatContext *ctx, AVPacket *pkt)
         if (!thp->queue.head) {
             if (thp->first_frame_size == 0)
                 thp->first_frame_size = pkt->size;
-            return avpriv_packet_list_put(&thp->queue, pkt, NULL, 0);
+            return ff_packet_list_get(&thp->queue, pkt, NULL, 0);
         }
 
         thp->next_total_size = pkt->size + thp->header_len;
         thp->start = avio_tell(pb);
         avio_wb32(pb, thp->next_total_size);
 
-        ret = avpriv_packet_list_put(&thp->queue, pkt, NULL, 0);
+        ret = ff_packet_list_get(&thp->queue, pkt, NULL, 0);
         if (ret < 0)
             return ret;
 
@@ -173,12 +173,12 @@ static int write_packet(AVFormatContext *ctx, AVPacket *pkt)
                     thp->first_frame_size += pkt->size;
                     thp->first_video = 1;
                 }
-                return avpriv_packet_list_put(&thp->video_queue, pkt, NULL, 0);
+                return ff_packet_list_get(&thp->video_queue, pkt, NULL, 0);
             }
 
             thp->next_total_size += pkt->size;
 
-            ret = avpriv_packet_list_put(&thp->video_queue, pkt, NULL, 0);
+            ret = ff_packet_list_get(&thp->video_queue, pkt, NULL, 0);
             if (ret < 0)
                 return ret;
             thp->have_video = 1;
@@ -188,12 +188,12 @@ static int write_packet(AVFormatContext *ctx, AVPacket *pkt)
                     thp->first_frame_size += pkt->size;
                     thp->first_audio = 1;
                 }
-                return avpriv_packet_list_put(&thp->audio_queue, pkt, NULL, 0);
+                return ff_packet_list_get(&thp->audio_queue, pkt, NULL, 0);
             }
 
             thp->next_total_size += pkt->size;
 
-            ret = avpriv_packet_list_put(&thp->audio_queue, pkt, NULL, 0);
+            ret = ff_packet_list_get(&thp->audio_queue, pkt, NULL, 0);
             if (ret < 0)
                 return ret;
             thp->have_audio = 1;
