@@ -614,7 +614,7 @@ const FFCodec ff_libvvdec_decoder = {
     .p.priv_class   = &class,
     .p.wrapper_name = "libvvdec",
     .priv_data_size = sizeof(VVdeCContext),
-    .p.pix_fmts     = pix_fmts_vvdec,
+    CODEC_PIXFMTS_ARRAY(pix_fmts_vvdec),
     .init           = vvdec_dec_init,
     FF_CODEC_DECODE_CB(vvdec_dec_frame),
     .close          = vvdec_dec_close,

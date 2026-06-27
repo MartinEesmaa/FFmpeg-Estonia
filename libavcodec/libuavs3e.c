@@ -271,7 +271,7 @@ const FFCodec ff_libuavs3e_encoder = {
     FF_CODEC_ENCODE_CB(uavs3e_encode_frame),
     .close            = uavs3e_close,
     .p.capabilities   = AV_CODEC_CAP_DELAY | FF_CODEC_CAP_AUTO_THREADS,
-    .p.pix_fmts		  = pix_fmts_uavs3e,
+    CODEC_PIXFMTS_ARRAY(pix_fmts_uavs3e),
     .p.priv_class     = &class,
     .p.wrapper_name   = "libuavs3e",
     .defaults         = uavs3e_defaults,
