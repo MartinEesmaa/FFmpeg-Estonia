@@ -254,6 +254,7 @@ OBJS-$(CONFIG_APTX_HD_ENCODER)         += aptxenc.o aptx.o
 OBJS-$(CONFIG_APNG_DECODER)            += png.o pngdec.o pngdsp.o
 OBJS-$(CONFIG_APNG_ENCODER)            += png.o pngenc.o
 OBJS-$(CONFIG_APV_DECODER)             += apv_decode.o apv_entropy.o apv_dsp.o
+OBJS-$(CONFIG_APV_VULKAN_ENCODER)      += apv_encode_vulkan.o
 OBJS-$(CONFIG_ARBC_DECODER)            += arbc.o
 OBJS-$(CONFIG_ARGO_DECODER)            += argo.o
 OBJS-$(CONFIG_SSA_DECODER)             += assdec.o ass.o
@@ -1347,6 +1348,7 @@ SKIPHEADERS                            += %_tablegen.h                  \
                                           %_tables.h                    \
                                           tableprint.h                  \
                                           tableprint_vlc.h              \
+                                          aaccoder_nmr.h                \
                                           aaccoder_twoloop.h            \
                                           aaccoder_trellis.h            \
                                           aacenc_quantization.h         \

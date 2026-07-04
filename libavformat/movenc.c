@@ -382,6 +382,7 @@ static int mov_write_amr_tag(AVIOContext *pb, MOVTrack *track)
 
 struct eac3_info {
     AVPacket *pkt;
+    uint8_t eof;
     uint8_t ec3_done;
     uint8_t num_blocks;
 
@@ -477,6 +478,12 @@ static int handle_eac3(MOVMuxContext *mov, AVPacket *pkt, MOVTrack *track)
 
     if (!info->pkt && !(info->pkt = av_packet_alloc()))
         return AVERROR(ENOMEM);
+
+    if (info->eof) {
+        av_assert1(!info->pkt->size);
+        ret = pkt->size;
+        goto end;
+    }
 
     if ((ret = avpriv_ac3_parse_header(&hdr, pkt->data, pkt->size)) < 0) {
         if (ret == AVERROR(ENOMEM))
@@ -590,11 +597,22 @@ concatenate:
             info->num_blocks = num_blocks;
         goto end;
     } else {
+        const AVPacketSideData *sd;
+        int64_t duration = pkt->duration;
         if ((ret = av_grow_packet(info->pkt, pkt->size)) < 0)
             goto end;
+        sd = av_packet_side_data_get(pkt->side_data, pkt->side_data_elems, AV_PKT_DATA_SKIP_SAMPLES);
+        if (sd && sd->size >= 10) {
+            uint8_t *buf = av_packet_new_side_data(info->pkt, AV_PKT_DATA_SKIP_SAMPLES, sd->size);
+            if (buf)
+                memcpy(buf, sd->data, sd->size);
+            if (track->par->frame_size)
+                duration = FFMAX(av_rescale_q(track->par->frame_size, (AVRational){ 1, track->par->sample_rate },
+                                              track->st->time_base), duration);
+        }
         memcpy(info->pkt->data + info->pkt->size - pkt->size, pkt->data, pkt->size);
         info->num_blocks += num_blocks;
-        info->pkt->duration += pkt->duration;
+        info->pkt->duration += duration;
         if (info->num_blocks != 6)
             goto end;
         av_packet_unref(pkt);
@@ -1394,6 +1412,7 @@ static int mov_write_audio_tag(AVFormatContext *s, AVIOContext *pb, MOVMuxContex
 
     if (track->mode == MODE_MOV) {
         if (track->par->sample_rate > UINT16_MAX || !track->par->ch_layout.nb_channels ||
+            track->par->codec_id == AV_CODEC_ID_EAC3 ||
             track->par->ch_layout.nb_channels > 2) {
             if (mov_get_lpcm_flags(track->par->codec_id))
                 tag = AV_RL32("lpcm");
@@ -3359,8 +3378,10 @@ static int mov_preroll_write_stbl_atoms(AVIOContext *pb, MOVTrack *track)
             if (roll_samples_remaining > 0)
                 distance = 0;
             /* Verify distance is a maximum of 32 (2.5ms) packets. */
-            if (distance > 32)
+            if (distance > 32) {
+                av_freep(&sgpd_entries);
                 return AVERROR_INVALIDDATA;
+            }
             if (i && distance == sgpd_entries[entries].roll_distance) {
                 sgpd_entries[entries].count++;
             } else {
@@ -6948,7 +6969,7 @@ int ff_mov_write_packet(AVFormatContext *s, AVPacket *pkt)
     AVCodecParameters *par;
     AVProducerReferenceTime *prft;
     unsigned int samples_in_chunk = 0;
-    int64_t duration = pkt->duration;
+    int64_t duration;
     int size = pkt->size, ret = 0, offset = 0;
     size_t prft_size;
     uint8_t *reformatted_data = NULL;
@@ -7323,12 +7344,15 @@ int ff_mov_write_packet(AVFormatContext *s, AVPacket *pkt)
     sd = av_packet_side_data_get(pkt->side_data, pkt->side_data_elems, AV_PKT_DATA_SKIP_SAMPLES);
     if (sd && sd->size >= 10 && trk->par->frame_size) {
         duration = FFMAX(av_rescale_q(trk->par->frame_size, (AVRational){ 1, trk->par->sample_rate },
-                                      trk->st->time_base), duration);
+                                      trk->st->time_base), pkt->duration);
+        if (mov->use_editlist)
+            pkt->duration = duration;
         duration -= av_rescale_q(AV_RL32(sd->data + 4), (AVRational){ 1, trk->par->sample_rate },
                                  trk->st->time_base);
         if (duration < 0)
             return AVERROR_INVALIDDATA;
-    }
+    } else
+        duration = pkt->duration;
 
     trk->track_duration = pkt->dts - trk->start_dts + pkt->duration;
     trk->last_sample_is_subtitle_end = 0;
@@ -9058,6 +9082,24 @@ static int mov_write_trailer(AVFormatContext *s)
             mov_write_subtitle_end_packet(s, i, trk->track_duration);
             trk->last_sample_is_subtitle_end = 1;
         }
+    }
+
+    //Also check for a buffered EAC3 packet
+    for (i = 0; i < mov->nb_tracks; i++) {
+        MOVTrack *trk = &mov->tracks[i];
+        if (trk->par->codec_id != AV_CODEC_ID_EAC3)
+            continue;
+        struct eac3_info *info = trk->eac3_priv;
+        if (!info || !info->pkt || !info->pkt->size)
+            continue;
+
+        av_packet_move_ref(mov->pkt, info->pkt);
+        info->eof = 1;
+        res = mov_write_single_packet(s, mov->pkt);
+        if (res < 0)
+            return res;
+
+        av_packet_unref(mov->pkt);
     }
 
     // Check if we have any tracks that require squashing.

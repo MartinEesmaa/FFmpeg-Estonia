@@ -2,6 +2,9 @@ Entries are sorted chronologically from oldest to youngest within each release,
 releases are sorted from youngest to oldest.
 
 version <next>:
+- extensively improved AAC encoder
+- APV Vulkan encoder
+
 
 version 9.0:
 - Extend AMF Color Converter (vf_vpp_amf) HDR capabilities
@@ -22,6 +25,7 @@ version 9.0:
 - Add AMF hardware memory mapping support.
 - ONNX Runtime DNN backend with GPU execution provider support
 - Remove deprecated NVENC options and support for pre-11.1 SDK versions
+- iTerm2 inline image protocol muxer
 
 
 version 8.1:

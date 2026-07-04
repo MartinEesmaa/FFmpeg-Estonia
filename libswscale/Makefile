@@ -52,5 +52,8 @@ TESTPROGS = colorspace                                                  \
             floatimg_cmp                                                \
             pixdesc_query                                               \
             swscale                                                     \
-            sws_ops                                                     \
-            sws_ops_aarch64                                             \
+
+TESTPROGS-$(CONFIG_UNSTABLE) = sws_ops                                  \
+                               sws_ops_aarch64                          \
+
+DEVPROGS-$(CONFIG_UNSTABLE)  = uops_macros_gen                          \

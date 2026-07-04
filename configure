@@ -3172,6 +3172,7 @@ apng_encoder_select="deflate_wrapper llvidencdsp"
 aptx_encoder_select="audio_frame_queue"
 aptx_hd_encoder_select="audio_frame_queue"
 apv_decoder_select="cbs_apv"
+apv_vulkan_encoder_select="vulkan spirv_compiler cbs_apv"
 asv1_decoder_select="blockdsp bswapdsp idctdsp"
 asv1_encoder_select="aandcttables bswapdsp fdctdsp pixblockdsp"
 asv2_decoder_select="blockdsp bswapdsp idctdsp"
@@ -3607,7 +3608,7 @@ pad_cuda_filter_deps="ffnvcodec"
 pad_cuda_filter_deps_any="cuda_nvcc cuda_llvm"
 
 ddagrab_filter_deps="d3d11va IDXGIOutput1 DXGI_OUTDUPL_FRAME_INFO"
-gfxcapture_filter_deps="cxx17 threads d3d11va IGraphicsCaptureItemInterop __x_ABI_CWindows_CGraphics_CCapture_CIGraphicsCaptureSession3"
+gfxcapture_filter_deps="cxx17 threads d3d11va IGraphicsCaptureItemInterop __x_ABI_CWindows_CGraphics_CCapture_CIGraphicsCaptureSession3 user32"
 gfxcapture_filter_extralibs="-lstdc++"
 scale_d3d11_filter_deps="d3d11va"
 scale_d3d12_filter_deps="d3d12va ID3D12VideoProcessor"
@@ -5170,6 +5171,7 @@ tmpfile TMPO   .o
 tmpfile TMPS   .S
 tmpfile TMPSH  .sh
 tmpfile TMPV   .ver
+tmpfile TMPRSP .rsp
 
 unset -f mktemp
 
@@ -6275,7 +6277,7 @@ case $target_os in
         SLIB_INSTALL_LINKS=
         SLIB_INSTALL_EXTRA_SHLIB='$(SLIBNAME:$(SLIBSUF)=.lib)'
         SLIB_INSTALL_EXTRA_LIB='lib$(SLIBNAME:$(SLIBSUF)=.dll.a) $(SLIBNAME_WITH_MAJOR:$(SLIBSUF)=.def)'
-        SLIB_CREATE_DEF_CMD='EXTERN_PREFIX="$(EXTERN_PREFIX)" AR="$(AR_CMD)" NM="$(NM_CMD)" $(SRC_PATH)/compat/windows/makedef $(SUBDIR)lib$(NAME).ver $(OBJS) > $$(@:$(SLIBSUF)=.def)'
+        SLIB_CREATE_DEF_CMD='EXTERN_PREFIX="$(EXTERN_PREFIX)" AR="$(AR_CMD)" NM="$(NM_CMD)" $(SRC_PATH)/compat/windows/makedef $(SUBDIR)lib$(NAME).ver $(SLIB_CREATE_DEF_INPUTS) > $$(@:$(SLIBSUF)=.def)'
         SHFLAGS='-shared -Wl,--out-implib,$(SUBDIR)lib$(SLIBNAME:$(SLIBSUF)=.dll.a) -Wl,--disable-auto-image-base $$(@:$(SLIBSUF)=.def)'
         enabled x86_64 && objformat="win64" || objformat="win32"
         dlltool="${cross_prefix}dlltool"
@@ -6314,7 +6316,7 @@ case $target_os in
         SLIBSUF=".dll"
         SLIBNAME_WITH_VERSION='$(SLIBPREF)$(FULLNAME)-$(LIBVERSION)$(SLIBSUF)'
         SLIBNAME_WITH_MAJOR='$(SLIBPREF)$(FULLNAME)-$(LIBMAJOR)$(SLIBSUF)'
-        SLIB_CREATE_DEF_CMD='LDFLAGS="$(LDFLAGS)" EXTERN_PREFIX="$(EXTERN_PREFIX)" $(SRC_PATH)/compat/windows/makedef $(SUBDIR)lib$(NAME).ver $(OBJS) > $$(@:$(SLIBSUF)=.def)'
+        SLIB_CREATE_DEF_CMD='LDFLAGS="$(LDFLAGS)" EXTERN_PREFIX="$(EXTERN_PREFIX)" $(SRC_PATH)/compat/windows/makedef $(SUBDIR)lib$(NAME).ver $(SLIB_CREATE_DEF_INPUTS) > $$(@:$(SLIBSUF)=.def)'
         SLIB_INSTALL_NAME='$(SLIBNAME_WITH_MAJOR)'
         SLIB_INSTALL_LINKS=
         SLIB_INSTALL_EXTRA_SHLIB='$(SLIBNAME:$(SLIBSUF)=.lib)'
@@ -8313,7 +8315,8 @@ esac
 
 if [ "$response_files" != "no" ]; then
     ar_out=${FFTMPDIR}/test$LIBSUF
-    respfile="@/dev/null"
+    echo > "$TMPRSP"
+    respfile="@$TMPRSP"
     out_arg="$(echo $ar_o | sed "s;\$@;$ar_out;g")"
     if test_cmd $ar $arflags $out_arg $respfile; then
         response_files="yes"
@@ -8663,8 +8666,8 @@ esc(){
 
 echo "config:$arch:$subarch:$cpu:$target_os:$(esc $cc_ident):$(esc $FFMPEG_CONFIGURATION)" > ffbuild/config.fate
 
-enabled stripping || strip="echo skipping strip"
-enabled stripping || striptype=""
+enabled stripping || striptype="nostrip"
+enabled stripping || ASMSTRIPFLAGS=""
 
 config_files="$TMPH ffbuild/config.mak doc/config.texi"
 
@@ -8811,6 +8814,11 @@ SLIBNAME=${SLIBNAME}
 SLIBNAME_WITH_VERSION=${SLIBNAME_WITH_VERSION}
 SLIBNAME_WITH_MAJOR=${SLIBNAME_WITH_MAJOR}
 SLIB_CREATE_DEF_CMD=${SLIB_CREATE_DEF_CMD}
+ifeq (\$(RESPONSE_FILES),yes)
+SLIB_CREATE_DEF_INPUTS=@\$\$@.objs
+else
+SLIB_CREATE_DEF_INPUTS=\$(OBJS)
+endif
 SLIB_EXTRA_CMD=${SLIB_EXTRA_CMD}
 SLIB_INSTALL_NAME=${SLIB_INSTALL_NAME}
 SLIB_INSTALL_LINKS=${SLIB_INSTALL_LINKS}
