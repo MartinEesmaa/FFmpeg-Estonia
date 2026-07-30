@@ -88,62 +88,50 @@ static av_cold int invert_formats(AVFilterFormats **fmts,
     return 0;
 }
 
-static int parse_pixel_format(enum AVPixelFormat *ret, const char *arg, void *log_ctx)
-{
-    char *tail;
-    int pix_fmt = av_get_pix_fmt(arg);
-    if (pix_fmt == AV_PIX_FMT_NONE) {
-        pix_fmt = strtol(arg, &tail, 0);
-        if (*tail || !av_pix_fmt_desc_get(pix_fmt)) {
-            av_log(log_ctx, AV_LOG_ERROR, "Invalid pixel format '%s'\n", arg);
-            return AVERROR(EINVAL);
-        }
-    }
-    *ret = pix_fmt;
-    return 0;
+#define DEFINE_PARSE(name, Type, get, descr, extra_test) \
+static int parse_##name(enum Type *ret, const char *arg, void *log_ctx) \
+{ \
+    char *tail; \
+    int val = get(arg); \
+    if (val < 0) { \
+        val = strtol(arg, &tail, 0); \
+        if (*tail || extra_test) { \
+            av_log(log_ctx, AV_LOG_ERROR, "Invalid " descr " '%s'\n", arg); \
+            return AVERROR(EINVAL); \
+        } \
+    } \
+    *ret = val; \
+    return 0; \
 }
+
+DEFINE_PARSE(pixel_format, AVPixelFormat, av_get_pix_fmt, "pixel format", !av_pix_fmt_desc_get(val))
+DEFINE_PARSE(color_space, AVColorSpace, av_color_space_from_name, "color space", 0)
+DEFINE_PARSE(color_range, AVColorRange, av_color_range_from_name, "color range", 0)
+DEFINE_PARSE(alpha_mode, AVAlphaMode, av_alpha_mode_from_name, "alpha mode", 0)
 
 static av_cold int init(AVFilterContext *ctx)
 {
     FormatContext *s = ctx->priv;
     enum AVPixelFormat pix_fmt;
+    enum AVColorSpace csp;
+    enum AVColorRange crg;
+    enum AVAlphaMode alm;
     int ret;
 
-    for (char *sep, *cur = s->pix_fmts; cur; cur = sep) {
-        sep = strchr(cur, '|');
-        if (sep && *sep)
-            *sep++ = 0;
-        if ((ret = parse_pixel_format(&pix_fmt, cur, ctx)) < 0 ||
-            (ret = ff_add_format(&s->formats, pix_fmt)) < 0)
-            return ret;
+    #define PARSE_LIST(strfield, fmtfield, tvar, parse) \
+    for (char *sep, *cur = s->strfield; cur; cur = sep) { \
+        sep = strchr(cur, '|'); \
+        if (sep && *sep) \
+            *sep++ = 0; \
+        if ((ret = parse(&tvar, cur, ctx)) < 0 || \
+            (ret = ff_add_format(&s->fmtfield, tvar)) < 0) \
+            return ret; \
     }
 
-    for (char *sep, *cur = s->csps; cur; cur = sep) {
-        sep = strchr(cur, '|');
-        if (sep && *sep)
-            *sep++ = 0;
-        if ((ret = av_color_space_from_name(cur)) < 0 ||
-            (ret = ff_add_format(&s->color_spaces, ret)) < 0)
-            return ret;
-    }
-
-    for (char *sep, *cur = s->ranges; cur; cur = sep) {
-        sep = strchr(cur, '|');
-        if (sep && *sep)
-            *sep++ = 0;
-        if ((ret = av_color_range_from_name(cur)) < 0 ||
-            (ret = ff_add_format(&s->color_ranges, ret)) < 0)
-            return ret;
-    }
-
-    for (char *sep, *cur = s->alphamodes; cur; cur = sep) {
-        sep = strchr(cur, '|');
-        if (sep && *sep)
-            *sep++ = 0;
-        if ((ret = av_alpha_mode_from_name(cur)) < 0 ||
-            (ret = ff_add_format(&s->alpha_modes, ret)) < 0)
-            return ret;
-    }
+    PARSE_LIST(pix_fmts, formats, pix_fmt, parse_pixel_format)
+    PARSE_LIST(csps, color_spaces, csp, parse_color_space)
+    PARSE_LIST(ranges, color_ranges, crg, parse_color_range)
+    PARSE_LIST(alphamodes, alpha_modes, alm, parse_alpha_mode)
 
     if (!strcmp(ctx->filter->name, "noformat")) {
         if ((ret = invert_formats(&s->formats,      ff_all_formats(AVMEDIA_TYPE_VIDEO))) < 0 ||

@@ -7,6 +7,8 @@ version <next>:
 - iTerm2 inline image protocol muxer
 - LCEVC payload merging bitstream filter
 - MVR demuxer
+- latticepal filter
+- DVD-Audio LPCM decoder and demuxing support
 
 
 version 9.0:
@@ -28,6 +30,7 @@ version 9.0:
 - Add AMF hardware memory mapping support.
 - ONNX Runtime DNN backend with GPU execution provider support
 - Remove deprecated NVENC options and support for pre-11.1 SDK versions
+- Add AMF Video Quality Enhancer (vf_vqe_amf) filter
 
 
 version 8.1:

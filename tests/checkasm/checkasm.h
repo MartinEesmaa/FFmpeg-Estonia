@@ -127,17 +127,13 @@ void checkasm_check_vp3dsp(void);
 void checkasm_check_vp6dsp(void);
 void checkasm_check_vp8dsp(void);
 void checkasm_check_vp9dsp(void);
-void checkasm_check_vp9_ipred(void);
-void checkasm_check_vp9_itxfm(void);
-void checkasm_check_vp9_loopfilter(void);
-void checkasm_check_vp9_mc(void);
 void checkasm_check_videodsp(void);
 void checkasm_check_vorbisdsp(void);
 void checkasm_check_vvc_alf(void);
 void checkasm_check_vvc_mc(void);
 void checkasm_check_vvc_sao(void);
 
-#define rnd checkasm_rand
+#define rnd checkasm_rand_uint32
 #define declare_func_float declare_func
 #define bench(...) checkasm_bench(__VA_ARGS__)
 

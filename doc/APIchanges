@@ -2,6 +2,28 @@ The last version increases of all libraries were on 2026-06-23.
 
 API changes, most recent first:
 
+2026-07-04 - xxxxxxxxxx - lavc 63.7.100 - codec_id.h
+  Add AV_CODEC_ID_PCM_DVDA.
+
+2026-07-xx - xxxxxxxxxx - lavf 63.5.101 - version_major.h
+  Deprecate using descriptor for metadata tag name in id3v2 COMM tags.
+  COMM Tags are duplicated, exporting deprecated named tag along with
+  new <tag>-<description>-<lang> tag until the next libavformat major
+  version bumped.
+
+2026-07-14 - xxxxxxxxxx - lavu 61.5.100 - hwcontext_cuda.h
+  Add AVCUDAFramesContext and AVCUDAArrayFrameDescriptor.
+
+2026-07-14 - xxxxxxxxxx - lavu 61.5.100 - pixfmt.h
+  Add AV_PIX_FMT_CUARRAY.
+
+2026-07-11 - xxxxxxxxxxx - lavu 61.4.100 - frame.h
+  Add AV_FRAME_DATA_DOWNMIX_MATRIX.
+
+2026-07-11 - xxxxxxxxxxx - lavu 61.3.100 - downmix_info.h
+  Add AVDownmixMatrix, AVDownmixCoeff.
+  Add av_downmix_matrix_coeff(), av_downmix_matrix_alloc().
+
 2026-07-09 - xxxxxxxxxxx - lavc 63.6.100 - codec_id.h
   Add AV_CODEC_ID_ITUT_T35.
 

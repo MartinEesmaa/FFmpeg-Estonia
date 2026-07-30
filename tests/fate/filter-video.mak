@@ -475,6 +475,12 @@ fate-filter-mpdecimate-maxdrop-pos: CMD = framecrc -lavfi testsrc2=r=1:d=5,fps=1
 FATE_FILTER-$(call FILTERFRAMECRC, TESTSRC2 FPS MPDECIMATE) += fate-filter-mpdecimate-maxdrop-neg
 fate-filter-mpdecimate-maxdrop-neg: CMD = framecrc -lavfi testsrc2=r=1:d=5,fps=10,mpdecimate=max=-3 -pix_fmt yuv420p
 
+FATE_FILTER-$(call FILTERFRAMECRC, TESTSRC2 FPS MPDECIMATE) += fate-filter-mpdecimate-mode-1
+fate-filter-mpdecimate-mode-1: CMD = framecrc -lavfi testsrc2=r=4:d=5,fps=5,mpdecimate=mode=1 -pix_fmt yuv420p
+
+FATE_FILTER-$(call FILTERFRAMECRC, TESTSRC2 FPS MPDECIMATE) += fate-filter-mpdecimate-mode-1-min-3
+fate-filter-mpdecimate-mode-1-min-3: CMD = framecrc -lavfi testsrc2=r=2:d=7,fps=7,mpdecimate=mode=1:min=3 -pix_fmt yuv420p
+
 FATE_FILTER-$(call FILTERFRAMECRC, FPS TESTSRC2) += $(addprefix fate-filter-fps-, up up-round-down up-round-up down down-round-down down-round-up down-eof-pass start-drop start-fill)
 fate-filter-fps-up: CMD = framecrc -lavfi testsrc2=r=3:d=2,fps=7
 fate-filter-fps-up-round-down: CMD = framecrc -lavfi testsrc2=r=3:d=2,fps=7:round=down
@@ -557,6 +563,14 @@ fate-filter-colorbalance: CMD = framecrc -c:v pgmyuv -i $(SRC) -vf scale,format=
 fate-filter-colorbalance-gbrap: CMD = framecrc -c:v pgmyuv -i $(SRC) -vf scale,format=gbrap,colorbalance=gh=.2 -flags +bitexact -sws_flags +accurate_rnd+bitexact -frames:v 3
 fate-filter-colorbalance-rgba64: CMD = framecrc -c:v pgmyuv -i $(SRC) -vf scale,format=rgba64,colorbalance=rm=.2,scale -pix_fmt rgba64le -flags +bitexact -sws_flags +accurate_rnd+bitexact -frames:v 3
 fate-filter-colorbalance-gbrap-16: CMD = framecrc -c:v pgmyuv -i $(SRC) -vf scale,format=gbrap,colorbalance=bh=.2 -pix_fmt gbrap -flags +bitexact -sws_flags +accurate_rnd+bitexact -frames:v 3
+
+FATE_FILTER_VSYNTH_PGMYUV-$(call ALLYES, SCALE_FILTER FORMAT_FILTER LATTICEPAL_FILTER) += fate-filter-latticepal fate-filter-latticepal-bayer fate-filter-latticepal-maxcolors fate-filter-latticepal-refine fate-filter-latticepal-residual fate-filter-latticepal-batched
+fate-filter-latticepal: CMD = framecrc -c:v pgmyuv -i $(SRC) -vf scale,format=rgb24,latticepal=density=32:dither=floyd_steinberg -flags +bitexact -sws_flags +accurate_rnd+bitexact -frames:v 5
+fate-filter-latticepal-bayer: CMD = framecrc -c:v pgmyuv -i $(SRC) -vf scale,format=rgb24,latticepal=density=7:dither=bayer -flags +bitexact -sws_flags +accurate_rnd+bitexact -frames:v 5
+fate-filter-latticepal-maxcolors: CMD = framecrc -c:v pgmyuv -i $(SRC) -vf scale,format=rgb24,latticepal=density=32:max_colors=100:dither=none -flags +bitexact -sws_flags +accurate_rnd+bitexact -frames:v 5
+fate-filter-latticepal-refine: CMD = framecrc -c:v pgmyuv -i $(SRC) -vf scale,format=rgb24,latticepal=density=32:dither=none:refine=full -flags +bitexact -sws_flags +accurate_rnd+bitexact -frames:v 5
+fate-filter-latticepal-residual: CMD = framecrc -c:v pgmyuv -i $(SRC) -vf scale,format=rgb24,latticepal=density=32:dither=bayer:refine=residual -flags +bitexact -sws_flags +accurate_rnd+bitexact -frames:v 5
+fate-filter-latticepal-batched: CMD = framecrc -c:v pgmyuv -i $(SRC) -vf scale,format=rgb24,latticepal=density=32:dither=floyd_steinberg:refine=batched -flags +bitexact -sws_flags +accurate_rnd+bitexact -frames:v 5
 
 FATE_FILTER_VSYNTH_VIDEO_FILTER-$(CONFIG_COLORMATRIX_FILTER) += fate-filter-colormatrix1 fate-filter-colormatrix2
 fate-filter-colormatrix1: CMD = video_filter "colormatrix=bt601:smpte240m,colormatrix=smpte240m:fcc,colormatrix=fcc:bt601,colormatrix=bt601:fcc,colormatrix=fcc:smpte240m,colormatrix=smpte240m:bt709"

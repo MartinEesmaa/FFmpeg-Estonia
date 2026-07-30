@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2026 Ramiro Polla
+ * Copyright (C) 2026 Ramiro Polla <ramiro.polla@gmail.com>
  *
  * This file is part of FFmpeg.
  *
@@ -18,13 +18,18 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#ifndef SWSCALE_AARCH64_OPS_LOOKUP_H
-#define SWSCALE_AARCH64_OPS_LOOKUP_H
+#ifndef SWSCALE_JIT_H
+#define SWSCALE_JIT_H
 
-#include "libswscale/ops_chain.h"
-#include "libswscale/aarch64/ops_impl.h"
+#include <stddef.h>
 
-/* Look up the exported function pointer for the given parameters. */
-SwsFuncPtr ff_sws_aarch64_lookup(const SwsAArch64OpImplParams *p);
+/* Allocate size bytes of writable memory for JIT code generation. */
+void *ff_sws_jit_alloc(size_t size);
 
-#endif /* SWSCALE_AARCH64_OPS_LOOKUP_H */
+/* Protect JIT memory from further writes. */
+int ff_sws_jit_protect(void *ptr, size_t size);
+
+/* Free memory allocated by ff_sws_jit_alloc(). */
+void ff_sws_jit_free(void *ptr, size_t size);
+
+#endif /* SWSCALE_JIT_H */
