@@ -1243,8 +1243,9 @@ static int ia_mpegh_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
 		memcpy(avpkt->data, ctx->pb_out_buf, i_out_bytes);
 	}
 	// Get the next frame pts and duration
-	ff_af_queue_remove(&ctx->afq, avctx->frame_size, &avpkt->pts,
-		&avpkt->duration);
+	ret = ff_af_queue_remove(&ctx->afq, avctx->frame_size, avpkt);
+	if (ret < 0)
+            return ret;
 	if(flag)
 	{
 		avpkt->size = i_out_bytes + ctx->LEN;
