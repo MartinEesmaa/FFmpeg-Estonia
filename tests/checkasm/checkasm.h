@@ -27,13 +27,8 @@
 #include <checkasm/test.h>
 #include <checkasm/utils.h>
 
-#include "config.h"
-#include "libavutil/avstring.h"
 #include "libavutil/cpu.h"
-#include "libavutil/emms.h"
 #include "libavutil/internal.h"
-#include "libavutil/lfg.h"
-#include "libavutil/timer.h"
 
 void checkasm_check_aacencdsp(void);
 void checkasm_check_aacpsdsp(void);
@@ -111,6 +106,8 @@ void checkasm_check_sw_yuv2rgb(void);
 void checkasm_check_sw_yuv2yuv(void);
 void checkasm_check_sw_ops(void);
 void checkasm_check_takdsp(void);
+void checkasm_check_ttadsp(void);
+void checkasm_check_ttaencdsp(void);
 void checkasm_check_utvideodsp(void);
 void checkasm_check_v210dec(void);
 void checkasm_check_v210enc(void);
@@ -132,6 +129,9 @@ void checkasm_check_vorbisdsp(void);
 void checkasm_check_vvc_alf(void);
 void checkasm_check_vvc_mc(void);
 void checkasm_check_vvc_sao(void);
+
+void checkasm_uninit_crc(void);
+void checkasm_uninit_tx(void);
 
 #define rnd checkasm_rand_uint32
 #define declare_func_float declare_func

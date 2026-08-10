@@ -164,7 +164,7 @@ static int vk_hevc_fill_pict(AVCodecContext *avctx, HEVCFrame **ref_src,
         .codedOffset = (VkOffset2D){ 0, 0 },
         .codedExtent = (VkExtent2D){ pic->f->width, pic->f->height },
         .baseArrayLayer = ctx->common.layered_dpb ? pic_id : 0,
-        .imageViewBinding = vkpic->view.ref[0],
+        .imageViewBinding = vkpic->view.ref,
     };
 
     *ref_slot = (VkVideoReferenceSlotInfoKHR) {
@@ -620,7 +620,7 @@ static void set_vps(const HEVCVPS *vps,
     };
 }
 
-static int vk_hevc_create_params(AVCodecContext *avctx, AVBufferRef **buf)
+static int vk_hevc_create_params(AVCodecContext *avctx, VkVideoSessionParametersKHR **buf)
 {
     int err;
     const HEVCContext *h = avctx->priv_data;
@@ -818,7 +818,7 @@ static int vk_hevc_start_frame(AVCodecContext          *avctx,
             .codedOffset = (VkOffset2D){ 0, 0 },
             .codedExtent = (VkExtent2D){ pic->f->width, pic->f->height },
             .baseArrayLayer = 0,
-            .imageViewBinding = vp->view.out[0],
+            .imageViewBinding = vp->view.out,
         },
     };
 

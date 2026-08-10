@@ -12216,13 +12216,23 @@ need to build and install the OpenVINO for C library (see
 be needed if the header files and libraries are not installed into system path)
 
 @item torch
-Libtorch backend. To enable this backend you need to build and install Libtroch
+Libtorch backend. To enable this backend you need to build and install Libtorch
 for C++ library. Please download cxx11 ABI version (see
 @url{https://pytorch.org/get-started/locally})
 and configure FFmpeg with @code{--enable-libtorch
 --extra-cflags=-I/libtorch_root/libtorch/include
 --extra-cflags=-I/libtorch_root/libtorch/include/torch/csrc/api/include
 --extra-ldflags=-L/libtorch_root/libtorch/lib/}
+
+When FFmpeg is built with CUDA support and the input frames use
+@code{AV_PIX_FMT_CUDA} with an underlying pixel format of @code{rgb0},
+@code{bgr0}, @code{rgb24}, or @code{bgr24}, the Torch backend maps GPU
+frame buffers directly into LibTorch CUDA tensors using zero-copy memory
+mapping.  This avoids host-device PCIe transfers and can significantly
+reduce inference latency.  The zero-copy path is selected automatically
+when the input format qualifies; no additional options are required.
+When the input format is not @code{AV_PIX_FMT_CUDA}, the backend uses
+the standard CPU tensor path.
 
 @item onnx
 ONNX Runtime backend. To enable this backend you need to install the
@@ -12268,6 +12278,26 @@ Roll back to sync execution if the backend does not support async.
 For tensorflow backend, you can set its configs with @option{sess_config} options,
 please use tools/python/tf_sess_config.py to get the configs of TensorFlow backend for your system.
 
+@item async
+Use DNN async inference (default: 1).  When enabled, frames are submitted
+to the backend without blocking the caller.  Supported by the Torch,
+OpenVINO, and TensorFlow backends; the ONNX Runtime backend ignores
+this option.
+
+@item nireq
+Number of concurrent inference requests (default: 0, meaning auto).
+When set to 0, the backend automatically determines an appropriate
+number of requests.  Higher values increase throughput by allowing
+multiple frames to be in flight simultaneously.
+
+@item batch_size
+Number of frames to batch into a single inference request (default: 1).
+Values greater than 1 cause the backend to accumulate frames and
+concatenate them along the batch dimension before running the model.
+This can significantly increase throughput on GPUs at the cost of
+slightly higher per-frame latency.  Currently supported by the OpenVINO
+and Torch backends.
+
 @item device
 Set the device to run the model. For the ONNX Runtime backend this selects the
 execution provider: @code{cpu} (default), @code{cuda} (NVIDIA GPU),
@@ -12304,6 +12334,32 @@ Handle the Y channel with espcn.pb (see @ref{sr} filter), which changes frame si
 please use tools/python/tf_sess_config.py to get the configs of TensorFlow backend for your system.
 @example
 ./ffmpeg -i 480p.jpg -vf format=yuv420p,dnn_processing=dnn_backend=tensorflow:model=espcn.pb:input=x:output=y:backend_configs=sess_config=0x10022805320e09cdccccccccccec3f20012a01303801 -y tmp.espcn.jpg
+@end example
+
+@item
+Perform zero-copy GPU inference with the Libtorch backend.  Because there
+is currently no GPU-side filter to convert from YUV to RGB,
+@code{hwupload} is used to upload CPU RGB frames into device memory.
+Once a GPU-side YUV-to-RGB filter becomes available, the @code{hwupload}
+step will no longer be necessary and all frames can stay in device memory
+throughout the pipeline:
+@example
+./ffmpeg -init_hw_device cuda=cuda -filter_hw_device cuda -i input.mp4 \
+  -vf "format=rgb24,hwupload,dnn_processing=dnn_backend=torch:model=my_model.pt,hwdownload,format=rgb0" \
+  -y output.mp4
+@end example
+
+@item
+Process rgb24 frames with a TorchScript model using the Libtorch backend:
+@example
+./ffmpeg -i input.jpg -vf format=rgb24,dnn_processing=dnn_backend=torch:model=my_model.pt output.jpg
+@end example
+
+@item
+Process rgb24 frames with the Libtorch backend using batch inference
+(four frames per request):
+@example
+./ffmpeg -i input.mp4 -vf format=rgb24,dnn_processing=dnn_backend=torch:model=my_model.pt:batch_size=4 -y output.mp4
 @end example
 
 @end itemize
