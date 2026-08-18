@@ -849,6 +849,7 @@ static int parse_playlist(HLSContext *c, const char *url,
     struct segment **prev_segments = NULL;
     int prev_n_segments = 0;
     int64_t prev_start_seq_no = -1;
+    int64_t load_start = av_gettime_relative();
 
     if (is_http && !in && c->http_persistent && c->playlist_pb) {
         in = c->playlist_pb;
@@ -1159,10 +1160,10 @@ static int parse_playlist(HLSContext *c, const char *url,
         free_segment_dynarray(prev_segments, prev_n_segments);
         av_freep(&prev_segments);
     }
-    if (pls)
-        pls->last_load_time = av_gettime_relative();
 
 fail:
+    if (pls)
+        pls->last_load_time = load_start;
     av_free(new_url);
     if (close_in)
         ff_format_io_close(c->ctx, &in);
@@ -1240,7 +1241,7 @@ static void parse_id3(AVFormatContext *s, AVIOContext *pb,
     static const char id3_priv_owner_audio_setup[] = "com.apple.streaming.audioDescription";
     ID3v2ExtraMeta *meta;
 
-    ff_id3v2_read_dict(pb, metadata, ID3v2_DEFAULT_MAGIC, extra_meta);
+    ff_id3v2_read_dict(NULL, pb, metadata, ID3v2_DEFAULT_MAGIC, extra_meta);
     for (meta = *extra_meta; meta; meta = meta->next) {
         if (!strcmp(meta->tag, "PRIV")) {
             ID3v2ExtraMetaPRIV *priv = &meta->data.priv;
@@ -2944,9 +2945,6 @@ static int hls_read_seek(AVFormatContext *s, int stream_index,
     if ((flags & AVSEEK_FLAG_BYTE) || (c->ctx->ctx_flags & AVFMTCTX_UNSEEKABLE))
         return AVERROR(ENOSYS);
 
-    first_timestamp = c->first_timestamp == AV_NOPTS_VALUE ?
-                      0 : c->first_timestamp;
-
     seek_timestamp = av_rescale_q_rnd(timestamp,
                                       s->streams[stream_index]->time_base,
                                       AV_TIME_BASE_Q, AV_ROUND_DOWN);
@@ -2964,6 +2962,29 @@ static int hls_read_seek(AVFormatContext *s, int stream_index,
     }
     if (!seek_pls)
         return AVERROR(EIO);
+
+    /* Live and EVENT playlists may have gained segments since the last load,
+     * and sliding-window playlists may also have expired some. Refresh before
+     * resolving a seek that may fall outside the loaded window, rate limited
+     * to the minimum reload interval (RFC 8216 6.3.4). */
+    if (!seek_pls->finished) {
+        int64_t elapsed = av_gettime_relative() - seek_pls->last_load_time;
+        int64_t start = c->first_timestamp == AV_NOPTS_VALUE ?
+                        0 : c->first_timestamp;
+        int64_t end = start;
+        int need_refresh;
+        for (i = 0; i < seek_pls->n_segments; i++)
+            end += seek_pls->segments[i]->duration;
+        need_refresh = seek_timestamp >= end;
+        if (seek_pls->type == PLS_TYPE_UNSPECIFIED)
+            need_refresh |= seek_timestamp < start + elapsed +
+                                             seek_pls->target_duration;
+        if (need_refresh && elapsed >= default_reload_interval(seek_pls))
+            parse_playlist(c, seek_pls->url, seek_pls, NULL);
+    }
+
+    first_timestamp = c->first_timestamp == AV_NOPTS_VALUE ?
+                      0 : c->first_timestamp;
 
     duration = s->duration == AV_NOPTS_VALUE ?
                0 : s->duration;
