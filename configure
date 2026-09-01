@@ -843,6 +843,10 @@ is_in(){
     return 1
 }
 
+msvc_style_linker(){
+    is_in $ld_type msvc icl lld-link
+}
+
 # The cfg loop is very hot (several thousands iterations), and in bash also
 # potentially quite slow. Try to abort the iterations early, preferably without
 # calling functions. 70%+ of the time cfg is already done or without deps.
@@ -1680,6 +1684,32 @@ check_pkg_config(){
         eval add_cflags \$${name}_cflags
 }
 
+probe_msvc_zlib_libname(){
+    log probe_msvc_zlib_libname
+    zlib_msvc_lib=zlib.lib
+
+    msvc_style_linker || return 0
+    test_cmd $pkg_config --exists --print-errors zlib || return 0
+
+    zlib_pkg_libs=$($pkg_config --libs $pkg_config_flags zlib) || return 0
+    is_in -lz $zlib_pkg_libs || return 0
+
+    for zlib_pkg_lib in $zlib_pkg_libs; do
+        case $zlib_pkg_lib in
+            -L*)
+                zlib_pkg_libdir=${zlib_pkg_lib#-L}
+                if test -f "$zlib_pkg_libdir/z.lib"; then
+                    zlib_msvc_lib=z.lib
+                    return 0
+                elif test -f "$zlib_pkg_libdir/zlib.lib"; then
+                    zlib_msvc_lib=zlib.lib
+                    return 0
+                fi
+                ;;
+        esac
+    done
+}
+
 check_pkg_config_cpp(){
     log check_pkg_config_cpp "$@"
     name="$1"
@@ -2283,6 +2313,7 @@ THREADS_LIST="
 
 ATOMICS_LIST="
     atomics_win32
+    atomics_os2
 "
 
 AUTODETECT_LIBS="
@@ -2762,7 +2793,6 @@ CONFIG_EXTRA="
     faandct
     faanidct
     fdctdsp
-    fmtconvert
     frame_thread_encoder
     g722dsp
     golomb
@@ -3052,8 +3082,10 @@ valgrind_backtrace_deps="valgrind_valgrind_h"
 
 # threading support
 atomics_win32_if="MemoryBarrier"
+atomics_os2_if="stdatomic"
 atomics_native_if_any="$ATOMICS_LIST"
 w32threads_deps="atomics_native"
+os2threads_deps="atomics_native"
 threads_if_any="$THREADS_LIST"
 
 # subsystems
@@ -3110,7 +3142,7 @@ aac_decoder_select="adts_header mpeg4audio sinewin"
 aac_fixed_decoder_select="adts_header mpeg4audio"
 aac_encoder_select="audio_frame_queue lpc sinewin"
 aac_latm_decoder_select="aac_decoder aac_latm_parser"
-ac3_decoder_select="ac3_parser ac3dsp bswapdsp fmtconvert"
+ac3_decoder_select="ac3_parser ac3dsp bswapdsp"
 ac3_fixed_decoder_select="ac3_parser ac3dsp bswapdsp"
 ac3_encoder_select="ac3dsp audiodsp me_cmp"
 ac3_fixed_encoder_select="ac3dsp audiodsp me_cmp"
@@ -4215,6 +4247,7 @@ freezedetect_filter_select="scene_sad"
 frei0r_deps_any="libdl LoadLibrary"
 frei0r_filter_deps="frei0r"
 frei0r_src_filter_deps="frei0r"
+fruc_vulkan_filter_deps="vulkan vulkan_1_4 spirv_compiler"
 fspp_filter_deps="gpl"
 fsync_filter_deps="avformat"
 gblur_vulkan_filter_deps="vulkan spirv_compiler"
@@ -5188,6 +5221,7 @@ armasm_flags(){
             # be passed to gas-preprocessor
             -M[TD]*)                                            ;;
             -guard:signret)                                     ;;
+            -experimental:*)                                    ;;
             *)                  echo $flag                      ;;
         esac
    done
@@ -5224,7 +5258,7 @@ msvc_common_flags(){
             -mthumb)              ;;
             -march=*)             ;;
             -mfp16-format=*)      ;;
-            -lz)                  echo zlib.lib ;;
+            -lz)                  echo ${zlib_msvc_lib:-zlib.lib} ;;
             -lx264)               echo libx264.lib ;;
             -lstdc++)             ;;
             -l*)                  echo ${flag#-l}.lib ;;
@@ -6487,13 +6521,6 @@ probe_libc(){
         add_${pfx}cppflags -D_USE_MATH_DEFINES -D_CRT_SECURE_NO_WARNINGS -D_CRT_NONSTDC_NO_WARNINGS
         test_${pfx}cpp_condition windows.h "!defined(_WIN32_WINNT) || _WIN32_WINNT < 0x0601" &&
             add_${pfx}cppflags -D_WIN32_WINNT=0x0601
-#ifdef WINAPI_FAMILY
-#include <winapifamily.h>
-#if !WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)
-#error not desktop
-#endif
-#endif
-EOF
         if [ "$pfx" = "" ]; then
             check_func strtoll || add_allcflags -Dstrtoll=_strtoi64
             check_func strtoull || add_allcflags -Dstrtoull=_strtoui64
@@ -7278,8 +7305,10 @@ if ! disabled pthreads && ! enabled w32threads && ! enabled os2threads; then
     fi
 fi
 
+enabled zlib && msvc_style_linker && probe_msvc_zlib_libname
 enabled  zlib && { check_pkg_config zlib zlib "zlib.h" zlibVersion ||
-                   check_lib zlib   zlib.h      zlibVersion    -lz; }
+                   { zlib_msvc_lib=z.lib;    check_lib zlib zlib.h zlibVersion -lz; } ||
+                   { zlib_msvc_lib=zlib.lib; check_lib zlib zlib.h zlibVersion -lz; }; }
 enabled bzlib && check_lib bzlib bzlib.h BZ2_bzlibVersion    -lbz2
 enabled  lzma && check_lib lzma   lzma.h lzma_version_number -llzma
 

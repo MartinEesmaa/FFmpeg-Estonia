@@ -2700,7 +2700,7 @@ static MovTref *mov_add_tref_tag(MOVStreamContext *sc, uint32_t name)
     return tag;
 }
 
-static int mov_read_cdsc(MOVContext* c, AVIOContext* pb, MOVAtom atom)
+static int mov_read_cdsc_rndr(MOVContext* c, AVIOContext* pb, MOVAtom atom)
 {
     AVStream* st;
     MOVStreamContext* sc;
@@ -2709,7 +2709,7 @@ static int mov_read_cdsc(MOVContext* c, AVIOContext* pb, MOVAtom atom)
         return 0;
 
     if (atom.size > 4) {
-        av_log(c->fc, AV_LOG_ERROR, "Only a single tref of type cdsc is supported\n");
+        av_log(c->fc, AV_LOG_ERROR, "Only a single tref of type cdsc/rndr is supported\n");
         return AVERROR_PATCHWELCOME;
     }
     if (atom.size < 4)
@@ -5819,8 +5819,8 @@ static int mov_read_custom(MOVContext *c, AVIOContext *pb, MOVAtom atom)
 
     if (mean && key && val) {
         if (strcmp(key, "iTunSMPB") == 0) {
-            int priming, remainder, samples;
-            if(sscanf(val, "%*X %X %X %X", &priming, &remainder, &samples) == 3){
+            int64_t priming, remainder, samples;
+            if (ff_itunes_parse_smpb(val, &priming, &remainder, &samples) >= 0) {
                 if(priming>0 && priming<16384)
                     st->codecpar->initial_padding = priming = av_rescale_q(priming, st->time_base,
                                                                            (AVRational){ 1, st->codecpar->sample_rate });
@@ -5836,7 +5836,8 @@ static int mov_read_custom(MOVContext *c, AVIOContext *pb, MOVAtom atom)
                         ffstream(st)->last_discard_sample = duration;
                     }
                 }
-                av_log(c->fc, AV_LOG_DEBUG, "Parsed iTunSMPB: priming %d, remainder %d samples %d\n",
+                av_log(c->fc, AV_LOG_DEBUG, "Parsed iTunSMPB: priming %"PRId64", "
+                       "remainder %"PRId64" samples %"PRId64"\n",
                        priming, remainder, samples);
             }
         }
@@ -10026,7 +10027,8 @@ static const MOVParseTableEntry mov_default_parse_table[] = {
 { MKTAG('a','v','c','C'), mov_read_glbl },
 { MKTAG('p','a','s','p'), mov_read_pasp },
 { MKTAG('c','l','a','p'), mov_read_clap },
-{ MKTAG('c','d','s','c'), mov_read_cdsc },
+{ MKTAG('c','d','s','c'), mov_read_cdsc_rndr },
+{ MKTAG('r','n','d','r'), mov_read_cdsc_rndr },
 { MKTAG('s','b','a','s'), mov_read_sbas },
 { MKTAG('v','d','e','p'), mov_read_vdep },
 { MKTAG('s','i','d','x'), mov_read_sidx },
@@ -11352,8 +11354,13 @@ static AVStream *mov_find_reference_track(AVFormatContext *s, AVStream *st,
     return NULL;
 }
 
-static int mov_parse_cdsc_streams(AVFormatContext *s)
+static int mov_parse_cdsc_and_rndr_streams(AVFormatContext *s)
 {
+    static const uint32_t tref_tags[] = {
+        MKTAG('c','d','s','c'),
+        MKTAG('r','n','d','r'),
+    };
+
     int err;
 
     // Don't try to add a group if there's only one track
@@ -11361,39 +11368,42 @@ static int mov_parse_cdsc_streams(AVFormatContext *s)
         return 0;
 
     for (int i = 0; i < s->nb_streams; i++) {
-        AVStreamGroup *stg;
         AVStream *st = s->streams[i];
-        AVStream *st_ref;
         MOVStreamContext *sc = st->priv_data;
-        MovTref *tag = mov_find_tref_tag(sc, MKTAG('c','d','s','c'));
 
-        if (!tag)
-            continue;
+        for (int c = 0; c < FF_ARRAY_ELEMS(tref_tags); c++) {
+            AVStreamGroup *stg;
+            AVStream *st_ref;
+            MovTref *tag = mov_find_tref_tag(sc, tref_tags[c]);
 
-        st_ref = mov_find_reference_track(s, st, tag->id, tag->nb_id, 0);
-        if (!st_ref) {
-            int loglevel = (s->error_recognition & AV_EF_EXPLODE) ? AV_LOG_ERROR : AV_LOG_WARNING;
-            av_log(s, loglevel, "Failed to find referenced stream\n");
-            if (s->error_recognition & AV_EF_EXPLODE)
-                return AVERROR_INVALIDDATA;
-            continue;
+            if (!tag)
+                continue;
+
+            st_ref = mov_find_reference_track(s, st, tag->id, tag->nb_id, 0);
+            if (!st_ref) {
+                int loglevel = (s->error_recognition & AV_EF_EXPLODE) ? AV_LOG_ERROR : AV_LOG_WARNING;
+                av_log(s, loglevel, "Failed to find referenced stream\n");
+                if (s->error_recognition & AV_EF_EXPLODE)
+                    return AVERROR_INVALIDDATA;
+                continue;
+            }
+
+            stg = avformat_stream_group_create(s, AV_STREAM_GROUP_PARAMS_TREF, NULL);
+            if (!stg)
+                return AVERROR(ENOMEM);
+
+            stg->id = st_ref->id;
+
+            err = avformat_stream_group_add_stream(stg, st_ref);
+            if (err < 0)
+                return err;
+
+            err = avformat_stream_group_add_stream(stg, st);
+            if (err < 0)
+                return err;
+
+            stg->params.tref->metadata_index = stg->nb_streams - 1;
         }
-
-        stg = avformat_stream_group_create(s, AV_STREAM_GROUP_PARAMS_TREF, NULL);
-        if (!stg)
-            return AVERROR(ENOMEM);
-
-        stg->id = st->id;
-
-        err = avformat_stream_group_add_stream(stg, st_ref);
-        if (err < 0)
-            return err;
-
-        err = avformat_stream_group_add_stream(stg, st);
-        if (err < 0)
-            return err;
-
-        stg->params.tref->metadata_index = stg->nb_streams - 1;
     }
 
     return 0;
@@ -11620,7 +11630,7 @@ static int mov_read_header(AVFormatContext *s)
     }
 
     /* Create metadata stream groups. */
-    err = mov_parse_cdsc_streams(s);
+    err = mov_parse_cdsc_and_rndr_streams(s);
     if (err < 0)
         return err;
 

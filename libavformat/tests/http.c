@@ -1,5 +1,5 @@
 /*
- * ARM optimized Format Conversion Utils
+ * Copyright (c) 2026 Romain Beauxis
  *
  * This file is part of FFmpeg.
  *
@@ -18,20 +18,36 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include <stdint.h>
+#include <stdio.h>
 
-#include "libavutil/attributes.h"
-#include "libavutil/aarch64/cpu.h"
-#include "libavcodec/fmtconvert.h"
+#include "libavformat/http.h"
 
-void ff_int32_to_float_fmul_scalar_neon(float *dst, const int32_t *src,
-                                        float mul, int len);
-
-av_cold void ff_fmt_convert_init_aarch64(FmtConvertContext *c)
+static void test(const char *line)
 {
-    int cpu_flags = av_get_cpu_flags();
+    HTTPStatusLine st;
+    int ret;
 
-    if (have_neon(cpu_flags)) {
-        c->int32_to_float_fmul_scalar = ff_int32_to_float_fmul_scalar_neon;
+    printf("\"%s\"\n", line);
+
+    ret = ff_http_parse_status_line(NULL, line, &st);
+    if (ret < 0) {
+        printf("  rejected\n");
+        return;
     }
+
+    printf("  version=\"%s\" code=%d willclose=%d reason=\"%s\"\n",
+           st.version, st.code, st.willclose, st.reason);
+}
+
+int main(int argc, char **argv)
+{
+    if (argc < 2) {
+        fprintf(stderr, "usage: %s <status line>...\n", argv[0]);
+        return 1;
+    }
+
+    for (int i = 1; i < argc; i++)
+        test(argv[i]);
+
+    return 0;
 }

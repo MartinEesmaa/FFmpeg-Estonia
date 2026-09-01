@@ -382,6 +382,9 @@ FATE_FILTER_VSYNTH_PGMYUV-$(CONFIG_SWAPRECT_FILTER) += $(FATE_SWAPRECT)
 FATE_FILTER_VSYNTH_PGMYUV-$(CONFIG_TBLEND_FILTER) += fate-filter-tblend
 fate-filter-tblend: CMD = framecrc -c:v pgmyuv -i $(SRC) -vf tblend=all_mode=difference128
 
+FATE_FILTER-$(call FILTERFRAMECRC, BLEND FORMAT NULLSRC SCALE SPLIT) += fate-filter-blend-expr-clipping
+fate-filter-blend-expr-clipping: CMD = framecrc -lavfi "nullsrc=s=1x1:d=1:r=1,format=gray10,split[a][b];[a][b]blend=c0_expr=1024,scale" -pix_fmt gray10le
+
 FATE_FILTER_VSYNTH_PGMYUV-$(CONFIG_TELECINE_FILTER) += fate-filter-telecine
 fate-filter-telecine: CMD = framecrc -c:v pgmyuv -i $(SRC) -vf telecine
 
@@ -545,6 +548,17 @@ fate-filter-scale2ref_keep_aspect: CMD = framemd5 -frames:v 5 -/filter_complex $
 FATE_FILTER_VSYNTH-$(call FILTERDEMDEC, SCALE, RAWVIDEO, RAWVIDEO) += fate-filter-scalechroma
 fate-filter-scalechroma: tests/data/vsynth1.yuv
 fate-filter-scalechroma: CMD = framecrc -flags bitexact -s 352x288 -pix_fmt yuv444p -i $(TARGET_PATH)/tests/data/vsynth1.yuv -pix_fmt yuv420p -sws_flags +bitexact -vf scale=out_chroma_loc=bottomleft
+
+FATE_FILTER-$(call ALLYES, SCALE_FILTER TESTSRC2_FILTER LAVFI_INDEV \
+                           WRAPPED_AVFRAME_DECODER WRAPPED_AVFRAME_ENCODER \
+                           NULL_MUXER) += fate-filter-scale-print-info \
+                                          fate-filter-scale-print-info-sub
+fate-filter-scale-print-info: CMD = run $(FFMPEG) -nostdin -hide_banner -filter_threads 1 -f lavfi -i "testsrc2=s=16x16:d=0.04" -vf "scale=32:32:flags=+print_info:scaler=lanczos" -frames:v 1 -f null -
+fate-filter-scale-print-info: CMP = grep
+fate-filter-scale-print-info: REF = Lanczos scaler
+fate-filter-scale-print-info-sub: CMD = run $(FFMPEG) -nostdin -hide_banner -filter_threads 1 -f lavfi -i "testsrc2=s=16x16:d=0.04" -vf "scale=32:32:flags=bicublin+print_info:scaler_sub=lanczos" -frames:v 1 -f null -
+fate-filter-scale-print-info-sub: CMP = grep
+fate-filter-scale-print-info-sub: REF = bicubic scaler
 
 # Regression test: cascaded scale=...:-2 on extreme aspect ratios could
 # previously produce zero output dimensions, silently accepted by scale
