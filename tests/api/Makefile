@@ -1,7 +1,9 @@
+APITESTPROGS-$(call ALLYES, LIBASTCENC_ENCODER LIBASTCENC_DECODER) += api-astc-profile
 APITESTPROGS-$(call ENCDEC, FLAC, FLAC) += api-flac
 APITESTPROGS-$(call DEMDEC, H264, H264) += api-h264
 APITESTPROGS-$(call DEMDEC, H264, H264) += api-h264-slice
 APITESTPROGS-$(CONFIG_MOV_MUXER)        += api-movenc
+APITESTPROGS-$(CONFIG_MOVTEXT_ENCODER)  += api-movtext
 APITESTPROGS-yes += api-seek api-dump-stream-meta
 APITESTPROGS-$(call DEMDEC, H263, H263) += api-band
 APITESTPROGS-$(HAVE_THREADS) += api-threadmessage

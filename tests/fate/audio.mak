@@ -37,10 +37,18 @@ fate-dss-lp: CMD = framecrc -i $(TARGET_SAMPLES)/dss/lp.dss -frames 30 -af aresa
 FATE_SAMPLES_AUDIO-$(call FRAMECRC, DSS, DSS_SP) += fate-dss-sp
 fate-dss-sp: CMD = framecrc -i $(TARGET_SAMPLES)/dss/sp.dss -frames 30
 
-FATE_SAMPLES_AUDIO-$(call PCM, DSF, DST, ARESAMPLE_FILTER) += fate-dsf-dst
+FATE_SAMPLES_AUDIO-$(call PCM, DSF, DST, ARESAMPLE_FILTER SWRESAMPLE) += fate-dsf-dst
 fate-dsf-dst: CMD = pcm -i $(TARGET_SAMPLES)/dst/dst-64fs44-2ch.dff
 fate-dsf-dst: CMP = oneoff
 fate-dsf-dst: REF = $(SAMPLES)/dst/dst-64fs44-2ch.pcm
+
+FATE_SAMPLES_AUDIO-$(call FRAMECRC, DSF, DST, DSD_MSBF_ENCODER) += fate-dsf-dst-dsd
+fate-dsf-dst-dsd: CMD = framecrc -request_sample_fmt dsd -i $(TARGET_SAMPLES)/dst/dst-64fs44-2ch.dff -c:a dsd_msbf
+
+FATE_SAMPLES_AUDIO-$(call PCM, DSF, DST, ARESAMPLE_FILTER) += fate-dsf-dst-dsd-pcm
+fate-dsf-dst-dsd-pcm: CMD = pcm -request_sample_fmt dsd -i $(TARGET_SAMPLES)/dst/dst-64fs44-2ch.dff
+fate-dsf-dst-dsd-pcm: CMP = oneoff
+fate-dsf-dst-dsd-pcm: REF = $(SAMPLES)/dst/dst-64fs44-2ch.pcm
 
 FATE_SAMPLES_AUDIO-$(call PCM, G728, G728, ARESAMPLE_FILTER) += fate-g728
 fate-g728: CMD = pcm -i $(TARGET_SAMPLES)/g728/CW3.g728
@@ -87,6 +95,11 @@ fate-smacker-audio: CMD = framecrc -i $(TARGET_SAMPLES)/smacker/wetlogo.smk -vn 
 
 FATE_SAMPLES_AUDIO-$(call DEMDEC, WSVQA, WS_SND1, ARESAMPLE_FILTER) += fate-ws_snd
 fate-ws_snd: CMD = md5 -i $(TARGET_SAMPLES)/vqa/ws_snd.vqa -f s16le -af aresample
+
+FATE_SAMPLES_AUDIO_FFPROBE-$(call DEMDEC, BINKA, BINKAUDIO_DCT) += fate-binkaudio-ueba-trimming
+fate-binkaudio-ueba-trimming: CMD = run ffprobe$(PROGSSUF)$(EXESUF) -bitexact \
+    -show_entries packet=pts,duration:packet_side_data:frame=pts,nb_samples:stream=duration_ts \
+    -of compact $(TARGET_SAMPLES)/bink/SW_Limon_01.binka
 
 FATE_SAMPLES_AUDIO_FFPROBE-$(call DEMDEC, WAV, WMAV2, FILE_PROTOCOL) += fate-flcl1905
 fate-flcl1905: CMD = run ffprobe$(PROGSSUF)$(EXESUF) -show_frames -show_packets -print_format compact $(TARGET_SAMPLES)/wav/FLCL_Ending_My-short.wav

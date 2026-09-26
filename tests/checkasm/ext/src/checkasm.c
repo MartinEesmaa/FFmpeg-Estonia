@@ -886,6 +886,8 @@ int checkasm_run(const CheckasmConfig *config)
         if (checkasm_perf_init())
             return 1;
 
+        checkasm_perf_warmup();
+
         checkasm_stats_reset(&stats);
         checkasm_measurement_init(&state.nop_cycles);
         checkasm_measurement_init(&state.perf_scale);

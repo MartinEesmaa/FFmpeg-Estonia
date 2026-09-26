@@ -185,6 +185,7 @@ include $(SRC_PATH)/tests/fate/dvvideo.mak
 include $(SRC_PATH)/tests/fate/ea.mak
 include $(SRC_PATH)/tests/fate/exif.mak
 include $(SRC_PATH)/tests/fate/enc_external.mak
+include $(SRC_PATH)/tests/fate/astc.mak
 # Must be included after lavf-video.mak
 include $(SRC_PATH)/tests/fate/ffmpeg.mak
 include $(SRC_PATH)/tests/fate/ffprobe.mak
@@ -324,7 +325,7 @@ $(FATE): export EXECSUF = $(EXESUF)
 $(FATE): export HOSTEXECSUF = $(HOSTEXESUF)
 $(FATE): $(FATE_UTILS:%=tests/%$(HOSTEXESUF)) | $(FATE_OUTDIRS)
 	@echo "TEST    $(@:fate-%=%)$(FATE_SUFFIX)"
-	$(Q)$(SRC_PATH)/tests/fate-run.sh $@$(FATE_SUFFIX) "$(TARGET_SAMPLES)" "$(TARGET_EXEC)" "$(TARGET_PATH)" '$(CMD)' '$(CMP)' '$(REF)' '$(FUZZ)' '$(THREADS)' '$(THREAD_TYPE)' '$(CPUFLAGS)' '$(CMP_SHIFT)' '$(CMP_TARGET)' '$(SIZE_TOLERANCE)' '$(CMP_UNIT)' '$(GEN)' '$(HWACCEL)' '$(REPORT)' '$(KEEP_FILES)'
+	$(Q)$(SRC_PATH)/tests/fate-run.sh $@$(FATE_SUFFIX) "$(TARGET_SAMPLES)" "$(TARGET_EXEC)" "$(TARGET_PATH)" '$(CMD)' '$(CMP)' '$(REF)' '$(FUZZ)' '$(THREADS)' '$(THREAD_TYPE)' '$(CPUFLAGS)' '$(CMP_SHIFT)' '$(CMP_TARGET)' '$(SIZE_TOLERANCE)' '$(CMP_UNIT)' '$(GEN)' '$(HWACCEL)' '$(REPORT)' '$(KEEP_FILES)' '$(CLEANFILES)'
 
 fate-list:
 	@printf '%s\n' $(sort $(FATE))

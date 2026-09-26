@@ -225,8 +225,6 @@ typedef struct FFVulkanShader {
     /* Creation info */
     VkPipelineShaderStageRequiredSubgroupSizeCreateInfo subgroup_info;
 
-    /* Base shader object */
-    VkShaderEXT object;
     VkPipeline pipeline;
 
     /* Pipeline layout */
@@ -329,6 +327,9 @@ typedef struct FFVulkanContext {
     VkPhysicalDeviceVulkan12Features feats_12;
 #ifdef VK_KHR_unified_image_layouts
     VkPhysicalDeviceUnifiedImageLayoutsFeaturesKHR unified_layout_feats;
+#endif
+#ifdef VK_KHR_maintenance11
+    VkPhysicalDeviceMaintenance11FeaturesKHR maintenance_11_feats;
 #endif
     VkPhysicalDeviceFeatures2 feats;
 

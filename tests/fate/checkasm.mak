@@ -8,6 +8,7 @@ FATE_CHECKASM = fate-checkasm-aacencdsp                                 \
                 fate-checkasm-apv_dsp                                   \
                 fate-checkasm-audiodsp                                  \
                 fate-checkasm-av_tx                                     \
+                fate-checkasm-base64                                    \
                 fate-checkasm-blockdsp                                  \
                 fate-checkasm-bswapdsp                                  \
                 fate-checkasm-cavsdsp                                   \
@@ -50,6 +51,7 @@ FATE_CHECKASM = fate-checkasm-aacencdsp                                 \
                 fate-checkasm-pixblockdsp                               \
                 fate-checkasm-pixelutils                                \
                 fate-checkasm-png                                       \
+                fate-checkasm-proresdsp                                 \
                 fate-checkasm-qpeldsp                                   \
                 fate-checkasm-sbrdsp                                    \
                 fate-checkasm-rv34dsp                                   \

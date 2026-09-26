@@ -8629,9 +8629,13 @@ Substation Alpha) subtitles files.
 
 This filter accepts @option{filename}/@option{f}, @option{original_size},
 @option{fontsdir}, and @option{alpha} from the @ref{subtitles} filter, plus the
-following option:
+following options:
 
 @table @option
+@item script
+The ASS script to render, given inline. Exactly one of @option{filename} and
+@option{script} must be set.
+
 @item shaping
 Set the shaping engine.
 
@@ -8649,6 +8653,11 @@ and Thai. Requires libass to be built with HarfBuzz.
 
 The default is @code{auto}.
 @end table
+
+@subsection Commands
+
+This filter supports the @option{script} option as @ref{commands}; the new
+script replaces the one being rendered.
 
 @section atadenoise
 Apply an Adaptive Temporal Averaging Denoiser to the video input.
@@ -17844,10 +17853,14 @@ The filter accepts the following options:
 
 @table @option
 @item min
-Lower bound. Defaults to the lowest allowed value for the input.
+Lower bound. Defaults to the lowest representable value for the input.
+Set to @var{auto} to use the minimum signal level for the input colorspace
+(only affects TV-range YUV signals).
 
 @item max
-Upper bound. Defaults to the highest allowed value for the input.
+Upper bound. Defaults to the highest representable value for the input.
+Set to @var{auto} to use the maximum signal level for the input colorspace
+(only affects TV-range YUV signals).
 
 @item planes
 Specify which planes will be processed. Defaults to all available.
@@ -23269,9 +23282,22 @@ This is a default value
 
 @item point
 Point
+AMF returns an unwritten surface for this algorithm when the format is
+@code{nv12} or @code{p010}, so inputs in those formats are converted to a packed
+RGB format automatically. This is a driver bug rather than a documented
+restriction; the conversion can be dropped once a driver that scales
+@code{nv12} and @code{p010} correctly with @code{point} is in wide use.
 
 @item sr1-1
 Video SR1.1
+This algorithm only supports packed RGB formats and requires a DirectX 11 or
+DirectX 12 device, so it is available on Windows only. Inputs in other formats
+such as @code{nv12} or @code{p010} are converted to a packed RGB format
+automatically.
+Note that the VideoSR algorithms (@code{sr1-0} and @code{sr1-1}) do not
+preserve the alpha channel (it is left zeroed); drop it after the download,
+e.g. with @code{hwdownload,format=rgba,format=rgb24}, if an opaque result is
+required.
 
 @end table
 
@@ -23281,6 +23307,16 @@ Control hq scaler sharpening. The value is a float in the range of [0.0, 2.0]
 @item format
 Controls the output pixel format. By default, or if none is specified, the input
 pixel format is used.
+
+The @code{point} and @code{sr1-1} algorithms emit the packed RGB format the
+scaler receives, so for them this option must name one of @code{rgba},
+@code{bgra}, @code{x2bgr10le} or @code{rgbaf16le}. A named format also decides
+what software input is converted to, and what a hardware surface in another
+format is converted to on the GPU. Without it, @code{x2bgr10le} is selected for
+@code{p010} input and @code{rgba} for other non-RGB input, and the result is
+tagged as full range RGB. libswscale cannot convert other software formats to
+@code{rgbaf16le}; use software input already in that format or a hardware
+input for GPU conversion.
 
 @item keep-ratio
 Force the scaler to keep the aspect ratio of the input image when the output size has a different aspect ratio.
@@ -23296,9 +23332,11 @@ which does not fill the entire output surface should be filled with a solid colo
 
 @itemize
 @item
-Scale input to 720p, keeping aspect ratio and ensuring the output is yuv420p.
+Upscale to 720p, keeping aspect ratio, and read the result back into system
+memory. The filter always outputs AMF surfaces, so a @ref{hwdownload} is needed
+to feed a software encoder.
 @example
-sr_amf=-2:720:format=yuv420p
+sr_amf=-2:720,hwdownload,format=nv12
 @end example
 
 @item
@@ -26202,8 +26240,10 @@ JEDEC P22 phosphors
 @itemize
 @item
 Scale input to 720p, keeping aspect ratio and ensuring the output is yuv420p.
+The filter always outputs AMF surfaces, so a @ref{hwdownload} is needed to feed a
+software encoder.
 @example
-vpp_amf=-2:720:format=yuv420p
+vpp_amf=-2:720:format=yuv420p,hwdownload,format=yuv420p
 @end example
 
 @item

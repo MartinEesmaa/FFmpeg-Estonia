@@ -161,6 +161,7 @@ int checkasm_perf_init_macos(CheckasmPerf *perf);
 int checkasm_perf_init_arm(CheckasmPerf *perf);
 int checkasm_perf_validate_start(const CheckasmPerf *perf);
 int checkasm_perf_validate_start_stop(const CheckasmPerf *perf);
+void checkasm_perf_warmup(void);
 
 int checkasm_run_on_all_cores(void (*func)(void));
 

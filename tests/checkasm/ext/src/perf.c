@@ -254,3 +254,27 @@ COLD void checkasm_measure_perf_scale(CheckasmMeasurement *meas)
 
     checkasm_measurement_update(meas, stats);
 }
+
+COLD void checkasm_perf_warmup(void)
+{
+#if defined(__APPLE__) && ARCH_AARCH64
+    /* On Apple Silicon, we have both performance and efficiency cores.
+     * On macOS, we can't pin the affinity of the process to a specific core.
+     *
+     * Therefore, benchmarks can easily get corrupted a lot by the process
+     * being moved from one core type to another.
+     *
+     * Processes seem to start out on an efficiency core, but get migrated
+     * to a performance core after burning CPU for a while. Try to make sure
+     * we consume CPU for a while before continuing with the program execution.
+     *
+     * This seems to be enough for mostly stable benchmarks without kperf.
+     */
+    uint64_t nsec        = checkasm_gettime_nsec();
+    uint64_t target_nsec = 100 * 1000 * 1000; // 100 ms
+    while (checkasm_gettime_nsec_diff(nsec) < target_nsec) {
+        for (int i = 0; i < 10000; i++)
+            checkasm_noop(NULL);
+    }
+#endif
+}

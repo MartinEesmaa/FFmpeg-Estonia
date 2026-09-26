@@ -460,12 +460,19 @@ int ff_vk_decode_frame(AVCodecContext *avctx,
 
     FFVkExecContext *exec = ff_vk_exec_get(&ctx->s, &ctx->exec_pool);
 
-    /* The current decoding reference has to be bound as an inactive reference */
-    VkVideoReferenceSlotInfoKHR *cur_vk_ref;
-    cur_vk_ref = (void *)&decode_start.pReferenceSlots[decode_start.referenceSlotCount];
-    cur_vk_ref[0] = vp->ref_slot;
-    cur_vk_ref[0].slotIndex = -1;
-    decode_start.referenceSlotCount++;
+    /* The current picture's resource has to be bound as an inactive
+     * reference, unless its slot is already bound as an active one, as when
+     * decoding the second field of a pair. */
+    int cur_bound = 0;
+    for (int i = 0; i < decode_start.referenceSlotCount; i++)
+        cur_bound |= decode_start.pReferenceSlots[i].slotIndex == vp->ref_slot.slotIndex;
+    if (!cur_bound) {
+        VkVideoReferenceSlotInfoKHR *cur_vk_ref;
+        cur_vk_ref = (void *)&decode_start.pReferenceSlots[decode_start.referenceSlotCount];
+        cur_vk_ref[0] = vp->ref_slot;
+        cur_vk_ref[0].slotIndex = -1;
+        decode_start.referenceSlotCount++;
+    }
 
     sd_buf = vp->slices_buf;
 
@@ -797,6 +804,12 @@ static VkResult vulkan_setup_profile(AVCodecContext *avctx,
     profile->lumaBitDepth        = ff_vk_depth_from_av_depth(desc->comp[0].depth);
     profile->chromaBitDepth      = profile->lumaBitDepth;
 
+    /* A pixel format without a video profile representation is not a valid
+     * profile to query the capabilities for */
+    if (profile->chromaSubsampling == VK_VIDEO_CHROMA_SUBSAMPLING_INVALID_KHR ||
+        profile->lumaBitDepth == VK_VIDEO_COMPONENT_BIT_DEPTH_INVALID_KHR)
+        return VK_ERROR_VIDEO_PROFILE_FORMAT_NOT_SUPPORTED_KHR;
+
     profile_list->sType        = VK_STRUCTURE_TYPE_VIDEO_PROFILE_LIST_INFO_KHR;
     profile_list->profileCount = 1;
     profile_list->pProfiles    = profile;
@@ -901,7 +914,8 @@ static int vulkan_decode_get_profile(AVCodecContext *avctx, AVBufferRef *frames_
                                    cur_profile);
     }
 
-    if (ret == VK_ERROR_VIDEO_PROFILE_OPERATION_NOT_SUPPORTED_KHR) {
+    if (ret == VK_ERROR_VIDEO_PROFILE_OPERATION_NOT_SUPPORTED_KHR ||
+        ret == VK_ERROR_VIDEO_PROFILE_CODEC_NOT_SUPPORTED_KHR) {
         av_log(avctx, AV_LOG_VERBOSE, "Unable to initialize video session: "
                "%s profile \"%s\" not supported!\n",
                avcodec_get_name(avctx->codec_id),
@@ -1000,10 +1014,9 @@ static int vulkan_decode_get_profile(AVCodecContext *avctx, AVBufferRef *frames_
                                    VK_VIDEO_DECODE_CAPABILITY_DPB_AND_OUTPUT_DISTINCT_BIT_KHR)) ==
                                    VK_VIDEO_DECODE_CAPABILITY_DPB_AND_OUTPUT_COINCIDE_BIT_KHR &&
                !(caps->flags & VK_VIDEO_CAPABILITY_SEPARATE_REFERENCE_IMAGES_BIT_KHR)) {
-        av_log(avctx, AV_LOG_ERROR, "Cannot initialize Vulkan decoding session, buggy driver: "
-               "VK_VIDEO_DECODE_CAPABILITY_DPB_AND_OUTPUT_COINCIDE_BIT_KHR set "
-               "but VK_VIDEO_CAPABILITY_SEPARATE_REFERENCE_IMAGES_BIT_KHR is unset!\n");
-        return AVERROR_EXTERNAL;
+        av_log(avctx, AV_LOG_VERBOSE,
+               "COINCIDE-only decode without SEPARATE_REFERENCE_IMAGES "
+               "(layered DPB capability); continuing\n");
     }
 
     dec->dedicated_dpb = !!(dec_caps->flags & VK_VIDEO_DECODE_CAPABILITY_DPB_AND_OUTPUT_DISTINCT_BIT_KHR);

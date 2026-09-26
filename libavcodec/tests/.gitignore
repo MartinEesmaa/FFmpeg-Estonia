@@ -1,3 +1,4 @@
+/ac3
 /apv
 /av1_levels
 /avcodec
@@ -17,5 +18,6 @@
 /mathops
 /mjpegenc_huffman
 /mpeg12framerate
+/mpegaudiodecheader
 /rangecoder
 /snowenc

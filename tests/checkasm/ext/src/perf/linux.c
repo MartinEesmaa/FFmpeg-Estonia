@@ -39,9 +39,37 @@
   #include <sys/syscall.h>
   #include <unistd.h>
 
+  #if HAVE_PTHREAD_SETAFFINITY_NP
+    #include <pthread.h>
+  #endif
+
   #include "internal.h"
 
 static int perf_sysfd = -1;
+
+/* The pinned CPU index, or -1 unless the thread is pinned to one CPU */
+static int get_pinned_cpu(void)
+{
+#if HAVE_PTHREAD_SETAFFINITY_NP && defined(CPU_SET)
+    cpu_set_t mask;
+    int cpu = -1;
+
+    if (pthread_getaffinity_np(pthread_self(), sizeof(mask), &mask))
+        return -1;
+
+    for (int i = 0; i < CPU_SETSIZE; i++) {
+        if (!CPU_ISSET(i, &mask))
+            continue;
+        if (cpu >= 0)
+            return -1;
+        cpu = i;
+    }
+
+    return cpu;
+#else
+    return -1;
+#endif
+}
 
 static uint64_t perf_start(void)
 {
@@ -73,7 +101,9 @@ COLD int checkasm_perf_init_linux(CheckasmPerf *perf)
     };
 
     if (perf_sysfd == -1) {
-        perf_sysfd = (int) syscall(SYS_perf_event_open, &attr, 0, -1, -1, 0);
+        perf_sysfd = (int) syscall(SYS_perf_event_open, &attr, /*pid*/ 0,
+                                   get_pinned_cpu(), /*group_fd*/ -1,
+                                   /*flags*/ 0);
         if (perf_sysfd == -1) {
             perror("perf_event_open");
             return 1;

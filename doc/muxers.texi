@@ -377,6 +377,24 @@ on MPEG-4 Part 14 format with a few incompatible variants, used to
 play files on PlayStation devices.
 @end table
 
+@subsection Stereoscopic 3D
+
+When the output stream has stereoscopic 3D side data (see the
+@option{-stereo3d} option), these muxers write:
+
+@itemize
+@item
+MP4: Google spatial-media @code{st3d} and Apple @code{vexu} can be
+written for supported metadata with @option{-strict unofficial}.
+Stricter compliance levels skip these boxes. Warnings are logged
+when stereoscopic or spherical side data is present, naming
+@code{st3d} or @code{sv3d}, respectively; there is no corresponding
+compliance warning for @code{vexu}. Monoscopic layouts do not
+produce an @code{eyes} box.
+@item
+MOV: Apple @code{vexu} eyes only. @code{st3d} is not written.
+@end itemize
+
 @subsection Fragmentation
 
 The @samp{mov}, @samp{mp4}, and @samp{ismv} muxers support
@@ -881,6 +899,17 @@ Specify loop end position expressed in milliseconds, from @code{0} to
 @code{INT_MAX}, default is @code{0}, in case @code{0} is set it
 assumes the total stream duration.
 @end table
+
+@section astc
+ASTC (Adaptive Scalable Texture Compression) muxer.
+
+This muxer accepts a single @samp{libastcenc} video stream and writes one
+image: the 16-byte @file{.astc} header, taken from the encoder's extradata,
+followed by the raw ASTC bitstream. The block footprint and the image
+dimensions come from the same extradata, and a second packet is rejected.
+
+Use the @file{.ktx} container for a texture that also needs its color space
+or row order recorded.
 
 @section au
 SUN AU audio muxer.
@@ -2797,6 +2826,36 @@ This muxer accepts a single @samp{jacosub} subtitles stream.
 For more information about the format, see
 @url{http://unicorn.us.com/jacosub/jscripts.html}.
 
+@section ktx
+Khronos Texture 1.0 muxer for ASTC textures.
+
+This muxer accepts a single @samp{libastcenc} video stream and writes one
+image: the ASTC block size and the image dimensions are taken from the
+encoder's extradata, and a second packet is rejected. The stored row order
+is recorded in a @code{KTXorientation} key.
+
+@subsection Options
+
+@table @option
+
+@item srgb @var{integer}
+Select the GL internal format color space. Possible values:
+@table @samp
+@item auto
+Use the color profile published by the encoder, which is the default.
+@item linear
+Write the linear ASTC format.
+@item srgb
+Write the sRGB ASTC format.
+@end table
+
+An explicit value that contradicts a known encoder profile is rejected.
+A raw @file{.astc} input does not carry a color profile, so remuxing it to
+@file{.ktx} with @code{auto} writes the sRGB format; pass
+@option{-srgb linear} to keep a linear texture.
+
+@end table
+
 @section kvag
 Simon & Schuster Interactive VAG muxer.
 
@@ -2867,6 +2926,11 @@ French).
 
 @item stereo_mode
 Set stereo 3D video layout of two views in a single video track.
+The @option{-stereo3d} option overrides existing stereoscopic side data
+and @code{stereo_mode} metadata for the selected output stream.
+Otherwise, stream-level @code{stereo_mode} metadata takes priority over
+global metadata, and stereoscopic side data is used when neither tag is
+present.
 
 The following values are recognized:
 @table @samp

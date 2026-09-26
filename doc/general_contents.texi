@@ -13,6 +13,49 @@ Go to @url{http://aomedia.org/} and follow the instructions for
 installing the library. Then pass @code{--enable-libaom} to configure to
 enable it.
 
+@section ARM ASTC Encoder
+
+FFmpeg can make use of the Arm ASTC Encoder library for ASTC image
+compression and decompression in the @code{libastcenc} encoder and
+decoder.
+
+Go to @url{https://github.com/ARM-software/astc-encoder} to obtain the
+sources. Version 5.4 or newer is required, because the wrappers use the
+four-argument @code{astcenc_context_alloc()} interface introduced in
+that release.
+
+The upstream build does not install the public header, and the library file
+name depends on the configured SIMD and linkage variants, so install the
+pieces manually in a layout that configure can detect: the header as
+@code{astcenc/astcenc.h} and a library that can be linked with
+@code{-lastcenc}. Keep the library's own file name, which is the SONAME
+recorded in the binary, and provide the plain name as an alias:
+
+@example
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DASTCENC_SHAREDLIB=ON
+cmake --build build
+install -Dm644 Source/astcenc.h /usr/local/include/astcenc/astcenc.h
+install -Dm755 build/Source/libastcenc-native-shared.so \
+              /usr/local/lib/libastcenc-native-shared.so
+ln -sf libastcenc-native-shared.so /usr/local/lib/libastcenc.so
+@end example
+
+Use the platform's shared library suffix, and adjust the built library name
+for other variants (for example @file{libastcenc-neon-shared.so} or a static
+@file{libastcenc.a}), or pass @code{--extra-cflags} and
+@code{--extra-ldflags} to configure if the files are installed elsewhere.
+Installing only under the plain name breaks linking at run time, and the
+installation directory has to be in the runtime loader's search path.
+
+On big-endian systems, also pass @code{-DASTCENC_ISA_NONE=ON} and
+@code{-DASTCENC_BIG_ENDIAN=ON} to CMake. For this variant, install
+@file{libastcenc-none-shared.so} under its own name and provide
+@file{libastcenc.so} as an alias, as in the example above.
+
+The library is licensed under Apache-2.0, which requires version 3 of
+the (L)GPL, so pass @code{--enable-version3} and
+@code{--enable-libastcenc} to configure to enable it.
+
 @section AMD AMF/VCE
 
 FFmpeg can use the AMD Advanced Media Framework library
@@ -486,6 +529,8 @@ library:
 @item ADS/SS2                   @tab   @tab X
     @tab Audio format used on the PS2.
 @item APNG                      @tab X @tab X
+@item .astc                     @tab X @tab X
+    @tab Raw ASTC texture container.
 @item ASF                       @tab X @tab X
     @tab Advanced / Active Streaming Format.
 @item AST                       @tab X @tab X
@@ -822,6 +867,8 @@ library:
     @tab Multimedia format used in Westwood Studios games.
 @item Wideband Single-bit Data (WSD) @tab   @tab X
 @item WVE                       @tab   @tab X
+@item KTX                       @tab X @tab X
+    @tab Khronos Texture 1.0 container for ASTC.
 @item Konami XMD                @tab   @tab X
 @item XMV                       @tab   @tab X
     @tab Microsoft video container used in Xbox games.
@@ -850,6 +897,8 @@ following image formats are supported:
 @item animated GIF @tab X @tab X
 @item APNG         @tab X @tab X
     @tab Animated Portable Network Graphics
+@item ASTC         @tab E @tab E
+    @tab Adaptive Scalable Texture Compression, through external library libastcenc
 @item BMP          @tab X @tab X
     @tab Microsoft BMP image
 @item BRender PIX  @tab   @tab X
@@ -1370,7 +1419,7 @@ following image formats are supported:
     @tab Used in Origin's Wing Commander IV AVI files.
 @item DPCM Xilam DERF        @tab     @tab  X
 @item DSD (Direct Stream Digital), least significant bit first  @tab  @tab  X
-@item DSD (Direct Stream Digital), most significant bit first   @tab  @tab  X
+@item DSD (Direct Stream Digital), most significant bit first   @tab  X  @tab  X
 @item DSD (Direct Stream Digital), least significant bit first, planar  @tab  @tab  X
 @item DSD (Direct Stream Digital), most significant bit first, planar   @tab  @tab  X
 @item DSP Group TrueSpeech   @tab     @tab  X

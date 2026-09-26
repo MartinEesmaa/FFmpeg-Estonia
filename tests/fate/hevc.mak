@@ -265,6 +265,10 @@ fate-hevc-bsf-dovi-split-el-rpu: CMD = framecrc -i $(TARGET_SAMPLES)/mkv/dovi-p7
 fate-hevc-skiploopfilter: CMD = framemd5 -skip_loop_filter nokey -i $(TARGET_SAMPLES)/hevc-conformance/SAO_D_Samsung_5.bit -sws_flags bitexact
 FATE_HEVC-$(call FRAMEMD5, HEVC, HEVC, HEVC_PARSER) += fate-hevc-skiploopfilter
 
+fate-hevc-skipframe-dslice: CMD = framecrc -skip_frame nointra -err_detect explode -i $(TARGET_SAMPLES)/hevc-conformance/DSLICE_A_HHI_5.bit
+fate-hevc-skipframe-slices: CMD = framecrc -skip_frame nointra -err_detect explode -i $(TARGET_SAMPLES)/hevc-conformance/SLICES_A_Rovi_3.bit
+FATE_HEVC-$(call FRAMECRC, HEVC, HEVC, HEVC_PARSER) += fate-hevc-skipframe-dslice fate-hevc-skipframe-slices
+
 # this sample has two stsd entries and needs to reload extradata
 FATE_HEVC-$(call FRAMEMD5, MOV, HEVC, SCALE_FILTER) += fate-hevc-extradata-reload
 fate-hevc-extradata-reload: CMD = framemd5 -i $(TARGET_SAMPLES)/hevc/extradata-reload-multi-stsd.mov -sws_flags bitexact
@@ -289,6 +293,15 @@ FATE_HEVC_FFPROBE-$(call DEMDEC, MOV, HEVC) += fate-hevc-dv-rpu
 
 fate-hevc-two-first-slice: CMD = threads=2 framemd5 -i $(TARGET_SAMPLES)/hevc/two_first_slice.mp4 -sws_flags bitexact -t 00:02.00 -an
 FATE_HEVC-$(call FRAMEMD5, MOV, HEVC) += fate-hevc-two-first-slice
+
+fate-hevc-skip-pred: CMD = probeframes -show_entries frame=key_frame,pts,pict_type -skip_pred all -skip_idct all $(TARGET_SAMPLES)/hevc-conformance/RAP_B_Bossen_1.bit
+FATE_HEVC_FFPROBE-$(call PARSERDEMDEC, HEVC, HEVC, HEVC) += fate-hevc-skip-pred
+
+fate-hevc-skip-pred-fields: CMD = probeframes -show_entries frame=key_frame,pts,pict_type,interlaced_frame,top_field_first -skip_pred all -skip_idct all $(TARGET_SAMPLES)/hevc/paired_fields.hevc
+FATE_HEVC_FFPROBE-$(call DEMDEC, HEVC, HEVC) += fate-hevc-skip-pred-fields
+
+fate-hevc-skip-pred-pts: CMD = probeframes -show_entries frame=key_frame,pts,pict_type -skip_pred all -skip_idct all $(TARGET_SAMPLES)/mov/elst_ends_betn_b_and_i.mp4
+FATE_HEVC_FFPROBE-$(call DEMDEC, MOV, HEVC) += fate-hevc-skip-pred-pts
 
 fate-hevc-cabac-tudepth: CMD = framecrc -i $(TARGET_SAMPLES)/hevc/cbf_cr_cb_TUDepth_4_circle.h265 -pix_fmt yuv444p
 FATE_HEVC-$(call FRAMECRC, HEVC, HEVC) += fate-hevc-cabac-tudepth

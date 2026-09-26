@@ -191,6 +191,10 @@ int ff_vk_load_props(FFVulkanContext *s)
     FF_VK_STRUCT_EXT(s, &s->feats, &s->unified_layout_feats, FF_VK_EXT_UNIFIED_IMAGE_LAYOUTS,
                      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_UNIFIED_IMAGE_LAYOUTS_FEATURES_KHR);
 #endif
+#ifdef VK_KHR_maintenance11
+    FF_VK_STRUCT_EXT(s, &s->feats, &s->maintenance_11_feats, FF_VK_EXT_MAINTENANCE_11,
+                     VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_11_FEATURES_KHR);
+#endif
 
     if (!s->imageviews_pool) {
         s->imageviews_pool = av_refstruct_pool_alloc_ext(sizeof(FFVkImageViews), 0,
@@ -2227,13 +2231,16 @@ void ff_vk_frame_barrier(FFVulkanContext *s, FFVkExecContext *e,
             break;
         }
 
+    /* Earlier submissions are ordered by the frame's semaphore, which makes
+     * their writes available and visible, so only accesses recorded in this
+     * command buffer belong in the source scope. */
     for (int i = 0; i < nb_images; i++) {
         bar[*nb_bar] = (VkImageMemoryBarrier2) {
             .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
             .pNext = NULL,
             .srcStageMask = src_stage,
             .dstStageMask = dst_stage,
-            .srcAccessMask = found >= 0 ? e->access_dst[found] : vkf->access[i],
+            .srcAccessMask = found >= 0 ? e->access_dst[found] : VK_ACCESS_2_NONE,
             .dstAccessMask = new_access,
             .oldLayout = found >= 0 ? e->layout_dst[found] : vkf->layout[0],
             .newLayout = new_layout,
@@ -2373,47 +2380,6 @@ static int init_compute_pipeline(FFVulkanContext *s, FFVulkanShader *shd,
     return 0;
 }
 
-static int create_shader_object(FFVulkanContext *s, FFVulkanShader *shd,
-                                const uint8_t *spirv, size_t spirv_len,
-                                size_t *binary_size, const char *entrypoint)
-{
-    VkResult ret;
-    FFVulkanFunctions *vk = &s->vkfn;
-
-    VkShaderCreateInfoEXT shader_obj_create = {
-        .sType = VK_STRUCTURE_TYPE_SHADER_CREATE_INFO_EXT,
-        .pNext = shd->subgroup_info.requiredSubgroupSize ?
-                 &shd->subgroup_info : NULL,
-        .flags = shd->subgroup_info.requiredSubgroupSize ?
-                 VK_SHADER_CREATE_REQUIRE_FULL_SUBGROUPS_BIT_EXT : 0x0,
-        .stage = shd->stage,
-        .nextStage = 0,
-        .codeType = VK_SHADER_CODE_TYPE_SPIRV_EXT,
-        .pCode = spirv,
-        .codeSize = spirv_len,
-        .pName = entrypoint,
-        .pSetLayouts = shd->desc_layout,
-        .setLayoutCount = shd->nb_descriptor_sets,
-        .pushConstantRangeCount = shd->push_consts_num,
-        .pPushConstantRanges = shd->push_consts,
-        .pSpecializationInfo = shd->specialization_info,
-    };
-
-    ret = vk->CreateShadersEXT(s->hwctx->act_dev, 1, &shader_obj_create,
-                               s->hwctx->alloc, &shd->object);
-    if (ret != VK_SUCCESS) {
-        av_log(s, AV_LOG_ERROR, "Unable to create shader object: %s\n",
-               ff_vk_ret2str(ret));
-        return AVERROR_EXTERNAL;
-    }
-
-    if (vk->GetShaderBinaryDataEXT(s->hwctx->act_dev, shd->object,
-                                   binary_size, NULL) != VK_SUCCESS)
-        return AVERROR_EXTERNAL;
-
-    return 0;
-}
-
 static int init_descriptors(FFVulkanContext *s, FFVulkanShader *shd)
 {
     VkResult ret;
@@ -2464,7 +2430,8 @@ int ff_vk_shader_link(FFVulkanContext *s, FFVulkanShader *shd,
     FFVulkanFunctions *vk = &s->vkfn;
     VkSpecializationMapEntry spec_entries[3];
     VkSpecializationInfo spec_info;
-    size_t input_size = spirv_len, binary_size = 0;
+    VkShaderModule mod;
+    size_t input_size = spirv_len;
 
     if (shd->precompiled) {
         if (!shd->specialization_info) {
@@ -2510,33 +2477,25 @@ int ff_vk_shader_link(FFVulkanContext *s, FFVulkanShader *shd,
     if (err < 0)
         goto end;
 
-    if (s->extensions & FF_VK_EXT_SHADER_OBJECT) {
-        err = create_shader_object(s, shd, spirv, spirv_len,
-                                   &binary_size, entrypoint);
-        if (err < 0)
-            goto end;
-    } else {
-        VkShaderModule mod;
-        err = create_shader_module(s, shd, &mod, spirv, spirv_len);
-        if (err < 0)
-            goto end;
+    err = create_shader_module(s, shd, &mod, spirv, spirv_len);
+    if (err < 0)
+        goto end;
 
-        switch (shd->bind_point) {
-        case VK_PIPELINE_BIND_POINT_COMPUTE:
-            err = init_compute_pipeline(s, shd, mod, entrypoint);
-            break;
-        default:
-            av_log(s, AV_LOG_ERROR, "Unsupported shader type: %i\n",
-                   shd->bind_point);
-            err = AVERROR(EINVAL);
-            goto end;
-            break;
-        };
+    switch (shd->bind_point) {
+    case VK_PIPELINE_BIND_POINT_COMPUTE:
+        err = init_compute_pipeline(s, shd, mod, entrypoint);
+        break;
+    default:
+        av_log(s, AV_LOG_ERROR, "Unsupported shader type: %i\n",
+               shd->bind_point);
+        err = AVERROR(EINVAL);
+        goto end;
+        break;
+    };
 
-        vk->DestroyShaderModule(s->hwctx->act_dev, mod, s->hwctx->alloc);
-        if (err < 0)
-            goto end;
-    }
+    vk->DestroyShaderModule(s->hwctx->act_dev, mod, s->hwctx->alloc);
+    if (err < 0)
+        goto end;
 
     if (shd->name)
         av_log(s, AV_LOG_VERBOSE, "Shader %s linked, size:", shd->name);
@@ -2545,10 +2504,7 @@ int ff_vk_shader_link(FFVulkanContext *s, FFVulkanShader *shd,
 
     if (input_size != spirv_len)
         av_log(s, AV_LOG_VERBOSE, " %zu compressed,", input_size);
-    av_log(s, AV_LOG_VERBOSE, " %zu SPIR-V", spirv_len);
-    if (binary_size != spirv_len)
-        av_log(s, AV_LOG_VERBOSE, ", %zu binary", binary_size);
-    av_log(s, AV_LOG_VERBOSE, "\n");
+    av_log(s, AV_LOG_VERBOSE, " %zu SPIR-V\n", spirv_len);
 
 end:
     if (shd->precompiled) {
@@ -2786,12 +2742,7 @@ void ff_vk_exec_bind_shader(FFVulkanContext *s, FFVkExecContext *e,
     FFVulkanFunctions *vk = &s->vkfn;
     const FFVulkanShaderData *sd = get_shd_data(e, shd);
 
-    if (s->extensions & FF_VK_EXT_SHADER_OBJECT) {
-        VkShaderStageFlagBits stages = shd->stage;
-        vk->CmdBindShadersEXT(e->buf, 1, &stages, &shd->object);
-    } else {
-        vk->CmdBindPipeline(e->buf, shd->bind_point, shd->pipeline);
-    }
+    vk->CmdBindPipeline(e->buf, shd->bind_point, shd->pipeline);
 
     if (sd && sd->nb_descriptor_sets) {
         if (!shd->use_push) {
@@ -2813,8 +2764,6 @@ void ff_vk_shader_free(FFVulkanContext *s, FFVulkanShader *shd)
                                 s->hwctx->alloc);
 #endif
 
-    if (shd->object)
-        vk->DestroyShaderEXT(s->hwctx->act_dev, shd->object, s->hwctx->alloc);
     if (shd->pipeline)
         vk->DestroyPipeline(s->hwctx->act_dev, shd->pipeline, s->hwctx->alloc);
     if (shd->pipeline_layout)
