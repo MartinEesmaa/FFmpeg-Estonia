@@ -1,11 +1,11 @@
-# FFmpeg-Plus README
+# FFmpeg-Estonia README
 
-FFmpeg-Plus is a collection of libraries and tools to process multimedia content
+FFmpeg-Estonia is a collection of libraries and tools to process multimedia content
 such as audio, video, subtitles and related metadata.
 
 Also bringing more codecs and other supports brought by Martin Eesmaa. :)
 
-## Additionals added in FFmpeg-Plus
+## Additionals added in FFmpeg-Estonia
 
 * External support of SVT encoders of HEVC and VP9
 * Dolby AC-4 native experimental decoding support (patch from librempeg)
