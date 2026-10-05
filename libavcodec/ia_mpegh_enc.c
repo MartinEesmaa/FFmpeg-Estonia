@@ -1035,7 +1035,7 @@ void ia_mpegh_handle_hoa(ia_input_config *pstr_input_config,IA_MPEGH_Context *ct
 	pstr_input_config->aud_ch_pcm_cfg.sample_rate = g_inp_hoa_config[0].sample_rate;
 }
 //
-static av_cold ia_mpegh_encode_init(AVCodecContext *avctx)
+static av_cold int ia_mpegh_encode_init(AVCodecContext *avctx)
 {
 	IA_MPEGH_Context *ctx = avctx->priv_data;
 
@@ -1117,7 +1117,7 @@ static av_cold ia_mpegh_encode_init(AVCodecContext *avctx)
 	return err_code;
 }
 
-static av_cold ia_mpegh_encode_close(AVCodecContext *avctx)
+static av_cold int ia_mpegh_encode_close(AVCodecContext *avctx)
 {
 	IA_MPEGH_Context *ctx = avctx->priv_data;
 
