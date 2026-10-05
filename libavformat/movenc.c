@@ -1347,16 +1347,6 @@ static int get_samples_per_packet(MOVTrack *track)
     }
     return first_duration;
 }
-static int mov_write_mhac_tag(AVIOContext *pb, MOVTrack *track)
-{
-    // Size of mhaC
-    avio_wb32(pb,track->par->extradata_size + 8 -1);
-    ffio_wfourcc(pb, "mhaC");
-    // Writing the buffer
-    avio_write(pb,track->par->extradata,track->par->extradata_size - 1);
-
-    return 1;
-}
 static int mov_write_btrt_tag(AVIOContext *pb, MOVTrack *track)
 {
     int64_t pos = avio_tell(pb);
