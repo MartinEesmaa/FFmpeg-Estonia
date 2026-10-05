@@ -972,6 +972,7 @@ ost_bind_filter(const Muxer *mux, MuxStream *ms, OutputFilter *ofilter,
         .color_space      = enc_ctx->colorspace,
         .color_range      = enc_ctx->color_range,
         .alpha_mode       = enc_ctx->alpha_mode,
+        .chroma_location  = enc_ctx->chroma_sample_location,
         .vsync_method     = vsync_method,
         .frame_rate       = ms->frame_rate,
         .max_frame_rate   = ms->max_frame_rate,
@@ -1023,6 +1024,11 @@ ost_bind_filter(const Muxer *mux, MuxStream *ms, OutputFilter *ofilter,
         ret = avcodec_get_supported_config(enc_ctx, NULL,
                                            AV_CODEC_CONFIG_ALPHA_MODE, 0,
                                            (const void **) &opts.alpha_modes, NULL);
+        if (ret < 0)
+            return ret;
+        ret = avcodec_get_supported_config(enc_ctx, NULL,
+                                           AV_CODEC_CONFIG_CHROMA_LOCATION, 0,
+                                           (const void **) &opts.chroma_locations, NULL);
         if (ret < 0)
             return ret;
     } else {
@@ -2610,6 +2616,7 @@ static int of_map_group(Muxer *mux, AVDictionary **dict, AVBPrint *bp, const cha
     case AV_STREAM_GROUP_PARAMS_LCEVC:
     case AV_STREAM_GROUP_PARAMS_TREF:
     case AV_STREAM_GROUP_PARAMS_DOLBY_VISION:
+    case AV_STREAM_GROUP_PARAMS_GAIN_MAP:
         break;
     default:
         av_log(mux, AV_LOG_ERROR, "Unsupported mapped group type %d.\n", stg->type);
@@ -2637,6 +2644,8 @@ static int of_parse_group_token(Muxer *mux, const char *token, char *ptr)
                 { .i64 = AV_STREAM_GROUP_PARAMS_LCEVC }, .unit = "type" },
             { "tref", NULL, 0, AV_OPT_TYPE_CONST,
                 { .i64 = AV_STREAM_GROUP_PARAMS_TREF }, .unit = "type" },
+            { "gain_map", NULL, 0, AV_OPT_TYPE_CONST,
+                { .i64 = AV_STREAM_GROUP_PARAMS_GAIN_MAP }, .unit = "type" },
         { NULL },
     };
     const AVClass class = {

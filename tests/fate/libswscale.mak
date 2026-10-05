@@ -6,6 +6,11 @@ FATE_LIBSWSCALE += fate-sws-floatimg-cmp
 fate-sws-floatimg-cmp: libswscale/tests/floatimg_cmp$(EXESUF)
 fate-sws-floatimg-cmp: CMD = run libswscale/tests/floatimg_cmp$(EXESUF)
 
+FATE_LIBSWSCALE += fate-sws-rgb2rgb-bounds
+fate-sws-rgb2rgb-bounds: libswscale/tests/colorspace$(EXESUF)
+fate-sws-rgb2rgb-bounds: CMD = run libswscale/tests/colorspace$(EXESUF)
+fate-sws-rgb2rgb-bounds: CMP = null
+
 SWS_SLICE_TEST-$(call DEMDEC, MATROSKA, VP9) += fate-sws-slice-yuv422-12bit-rgb48
 fate-sws-slice-yuv422-12bit-rgb48: CMD = run tools/scale_slice_test$(EXESUF) $(TARGET_SAMPLES)/vp9-test-vectors/vp93-2-20-12bit-yuv422.webm 150 100 rgb48
 
@@ -31,15 +36,37 @@ fate-sws-yuv-range: CMD = framecrc \
   -frames 1 \
   -vf scale=in_color_matrix=bt601:in_range=limited:out_color_matrix=bt601:out_range=full:flags=+accurate_rnd+bitexact
 
-# This self-check currently fails for legacy swscale, so pass SWS_UNSTABLE to use the new code
-FATE_LIBSWSCALE-$(CONFIG_UNSTABLE) += fate-sws-unscaled
-fate-sws-unscaled: libswscale/tests/swscale$(EXESUF)
-fate-sws-unscaled: CMD = run libswscale/tests/swscale$(EXESUF) -scaler none -backends unstable -v 16
+ifeq ($(CONFIG_UNSTABLE),yes)
+SWS_UNSTABLE_BACKENDS-yes                            += c memcpy
+ifeq ($(ARCH_X86_64),yes)
+SWS_UNSTABLE_BACKENDS-$(HAVE_X86ASM)                 += x86
+endif
+ifeq ($(ARCH_AARCH64),yes)
+SWS_UNSTABLE_BACKENDS-$(HAVE_NEON)                   += aarch64
+endif
+# TODO: enable spirv tests once they pass on all Vulkan devices.
+# SWS_UNSTABLE_BACKENDS-$(HAVE_SPIRV_HEADERS_SPIRV_H)  += spirv
+# SWS_UNSTABLE_BACKENDS-$(HAVE_SPIRV_UNIFIED1_SPIRV_H) += spirv
+
+# Set -hw default for Vulkan tests.
+fate-sws-unscaled-spirv fate-sws-unstable-spirv: SWS_HW = -hw default
+
+# Legacy swscale fails this self-check; test each available ops backend.
+FATE_SWS_UNSCALED := $(SWS_UNSTABLE_BACKENDS-yes:%=fate-sws-unscaled-%)
+$(FATE_SWS_UNSCALED): libswscale/tests/swscale$(EXESUF)
+$(FATE_SWS_UNSCALED): CMD = run libswscale/tests/swscale$(EXESUF) -v 16 $(SWS_HW) -scaler none -backends $(@:fate-sws-unscaled-%=%)
+$(FATE_SWS_UNSCALED): REF = /dev/null
+fate-sws-unscaled: $(FATE_SWS_UNSCALED)
 
 # Run only 2% of swscale tests to keep the run time short, and only check for failure
-FATE_LIBSWSCALE-$(CONFIG_UNSTABLE) += fate-sws-unstable
-fate-sws-unstable: libswscale/tests/swscale$(EXESUF)
-fate-sws-unstable: CMD = run libswscale/tests/swscale$(EXESUF) -backends unstable -p 0.02 -v 16
+FATE_SWS_UNSTABLE := $(SWS_UNSTABLE_BACKENDS-yes:%=fate-sws-unstable-%)
+$(FATE_SWS_UNSTABLE): libswscale/tests/swscale$(EXESUF)
+$(FATE_SWS_UNSTABLE): CMD = run libswscale/tests/swscale$(EXESUF) -v 16 $(SWS_HW) -backends $(@:fate-sws-unstable-%=%) -p 0.02
+$(FATE_SWS_UNSTABLE): REF = /dev/null
+fate-sws-unstable: $(FATE_SWS_UNSTABLE)
+
+FATE_LIBSWSCALE += $(FATE_SWS_UNSCALED) $(FATE_SWS_UNSTABLE)
+endif
 
 ifneq ($(HAVE_BIGENDIAN),yes)
 
@@ -61,6 +88,11 @@ fate-sws-uops-macros: REF = $(SRC_PATH)/libswscale/uops_macros.h
 fate-sws-uops-macros: CMD = run libswscale/uops_macros_gen$(EXESUF)
 
 endif
+
+FATE_LIBSWSCALE-$(CONFIG_UNSTABLE) += fate-sws-rational64
+fate-sws-rational64: libswscale/tests/rational64$(EXESUF)
+fate-sws-rational64: CMD = run libswscale/tests/rational64$(EXESUF)
+fate-sws-rational64: CMP = null
 
 FATE_LIBSWSCALE-$(CONFIG_UNSTABLE) += fate-sws-ops-entries-aarch64
 fate-sws-ops-entries-aarch64: libswscale/tests/sws_ops_aarch64$(EXESUF)

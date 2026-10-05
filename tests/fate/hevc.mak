@@ -233,7 +233,7 @@ FATE_HEVC-$(call DEMMUX, HEVC MOV, MOV HEVC, HEVC_PARSER HEVC_MP4TOANNEXB_BSF EX
 fate-hevc-bsf-mp4toannexb: tests/data/hevc-mp4.mov
 fate-hevc-bsf-mp4toannexb: CMD = md5 -i $(TARGET_PATH)/tests/data/hevc-mp4.mov -c:v copy -fflags +bitexact -f hevc
 fate-hevc-bsf-mp4toannexb: CMP = oneline
-fate-hevc-bsf-mp4toannexb: REF = 73019329ed7f81c24f9af67c34c640c0
+fate-hevc-bsf-mp4toannexb: REF = 7d05a79c7a6665ae22c0043a4d83a811
 
 FATE_HEVC-$(call DEMMUX, HEVC MOV, MOV HEVC, HEVC_PARSER HEVC_MP4TOANNEXB_BSF EXTRACT_EXTRADATA_BSF HEVC_METADATA_BSF SCALE_FILTER) += fate-hevc-bsf-mp4toannexb-new-extradata
 fate-hevc-bsf-mp4toannexb-new-extradata: CMD = stream_remux mov $(TARGET_SAMPLES)/hevc/extradata-reload-multi-stsd.mov "" hevc "-bsf:v hevc_mp4toannexb,hevc_metadata -map 0:v"
@@ -302,6 +302,15 @@ FATE_HEVC_FFPROBE-$(call DEMDEC, HEVC, HEVC) += fate-hevc-skip-pred-fields
 
 fate-hevc-skip-pred-pts: CMD = probeframes -show_entries frame=key_frame,pts,pict_type -skip_pred all -skip_idct all $(TARGET_SAMPLES)/mov/elst_ends_betn_b_and_i.mp4
 FATE_HEVC_FFPROBE-$(call DEMDEC, MOV, HEVC) += fate-hevc-skip-pred-pts
+
+# TILES_A conformance picture through the tile-parallel slice path, same output
+fate-hevc-tiles-slice-threads: CMD = thread_type=slice threads=4 framecrc -i $(TARGET_SAMPLES)/hevc-conformance/TILES_A_Cisco_2.bit -pix_fmt yuv420p
+fate-hevc-tiles-slice-threads: REF = $(SRC_PATH)/tests/ref/fate/hevc-conformance-TILES_A_Cisco_2
+FATE_HEVC-$(call FRAMECRC, HEVC, HEVC, HEVC_PARSER) += fate-hevc-tiles-slice-threads
+
+# deblocking disabled + loop_filter_across_tiles: tile edges must stay unfiltered
+fate-hevc-tiles-nodeblock-slice-threads: CMD = thread_type=slice threads=4 framecrc -i $(TARGET_SAMPLES)/hevc/tiles_nodeblock.hevc
+FATE_HEVC-$(call FRAMECRC, HEVC, HEVC, HEVC_PARSER) += fate-hevc-tiles-nodeblock-slice-threads
 
 fate-hevc-cabac-tudepth: CMD = framecrc -i $(TARGET_SAMPLES)/hevc/cbf_cr_cb_TUDepth_4_circle.h265 -pix_fmt yuv444p
 FATE_HEVC-$(call FRAMECRC, HEVC, HEVC) += fate-hevc-cabac-tudepth

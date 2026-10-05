@@ -22,6 +22,7 @@
 #include "config_components.h"
 
 #include <curl/curl.h>
+#include <errno.h>
 #include <inttypes.h>
 #include <limits.h>
 #include <stdlib.h>
@@ -42,6 +43,7 @@
 #include "avformat.h"
 #include "http.h"
 #include "internal.h"
+#include "network.h"
 #include "url.h"
 #include "version.h"
 
@@ -57,6 +59,12 @@
 
 /* Largest in-band metadata block: the length byte counts 16 byte units. */
 #define ICY_MAX_BLOCK (255 * 16)
+
+/* How many microseconds to wait before retrying a failed request; grows
+ * exponentially (2^) with each consecutive failure up to MAX_US. Note that the
+ * first retry is always immediate. */
+#define CURL_RETRY_BASE_US 1000000
+#define CURL_RETRY_MAX_US  60000000
 
 typedef struct CurlContext CurlContext;
 
@@ -83,7 +91,7 @@ typedef struct CurlLoop {
     CURLM          *multi;
     CURLSH         *share;   /* shared cookies/HSTS */
 
-    pthread_mutex_t mutex;   /* guards the command queue, exit and cmd->done */
+    pthread_mutex_t mutex;   /* guards the command queue, exit, share and cmd->done */
     pthread_cond_t  cond;    /* signaled when a sync command completes */
     CurlCmd        *cmd_head, *cmd_tail;
     int             exit;
@@ -136,7 +144,10 @@ struct CurlContext {
     char           *icy_metadata_packet;  /* last in-band block (output) */
     AVDictionary   *metadata;             /* ICY metadata (output) */
 
-    int64_t         logical_pos; /* next byte url_read() will return, caller side */
+    /* URL thread bookkeeping, not touched by loop thread */
+    int64_t         logical_pos;    /* next byte url_read() will return, caller side */
+    int             retry_count;    /* consecutive recoverable failures */
+    int64_t         retry_time;     /* timestamp of next retry */
     int64_t         icy_data_read;    /* payload bytes since the last block, caller side */
     int             icy_block_len;    /* -1 while the length byte is pending */
     int             icy_block_filled;
@@ -147,7 +158,6 @@ struct CurlContext {
     int64_t         request_start;   /* absolute offset the current request began at */
     int64_t         request_received;/* bytes delivered in the current request */
     int64_t         request_end;     /* expected end of request, or -1 if unknown */
-    int             retry_count;     /* consecutive recoverable failures */
     int             is_initial;      /* using reduced request size */
     int             seek_queued;     /* soft seeking; drain remaining bytes until done */
 
@@ -157,6 +167,7 @@ struct CurlContext {
     int64_t         hdr_content_start; /* inclusive start, or -1 */
     int64_t         hdr_content_end;   /* inclusive end,   or -1 */
     int64_t         hdr_content_total; /* if known, or -1 */
+    int64_t         hdr_content_length; /* if known, or -1 */
     AVDictionary   *hdr_icy;           /* "Icy-*" headers of this block */
     int64_t         hdr_icy_metaint;   /* in-band metadata interval, or -1 */
 
@@ -171,8 +182,9 @@ struct CurlContext {
     pthread_cond_t  cond;
     AVFifo         *fifo;
     int             paused;      /* write callback paused, FIFO was full */
-    int             status;      /* current stream status (AVERROR code) */
     int             aborted;     /* transfer should stop (open was interrupted) */
+    int             status;      /* current stream status (AVERROR code) */
+    CURLcode        curl_status; /* corresponding libcurl status code */
     int64_t         icy_metaint; /* in-band metadata interval, 0 if none */
 };
 
@@ -184,7 +196,10 @@ static int curlcode_to_averror(CURLcode code)
     switch (code) {
     case CURLE_OK:                       return 0;
     case CURLE_URL_MALFORMAT:
-    case CURLE_UNSUPPORTED_PROTOCOL:     return AVERROR(EINVAL);
+    case CURLE_UNSUPPORTED_PROTOCOL:
+    case CURLE_BAD_FUNCTION_ARGUMENT:    return AVERROR(EINVAL);
+    case CURLE_UNKNOWN_OPTION:
+    case CURLE_NOT_BUILT_IN:             return AVERROR(ENOSYS);
     case CURLE_COULDNT_RESOLVE_PROXY:
     case CURLE_COULDNT_RESOLVE_HOST:     return AVERROR(EHOSTUNREACH);
     case CURLE_COULDNT_CONNECT:          return AVERROR(ECONNREFUSED);
@@ -195,6 +210,38 @@ static int curlcode_to_averror(CURLcode code)
     case CURLE_PEER_FAILED_VERIFICATION:
     case CURLE_SSL_CACERT_BADFILE:       return AVERROR_INVALIDDATA;
     default:                             return AVERROR(EIO);
+    }
+}
+
+static int curl_setopt_checked(CurlContext *c, const char *name, CURLcode code)
+{
+    if (code == CURLE_OK)
+        return 0;
+
+    av_log(c->h, AV_LOG_ERROR, "Could not set %s: %s\n",
+           name, curl_easy_strerror(code));
+    return curlcode_to_averror(code);
+}
+
+static int curlmcode_to_averror(CURLMcode code)
+{
+    switch (code) {
+    case CURLM_OK:                       return 0;
+    case CURLM_UNKNOWN_OPTION:           return AVERROR(EINVAL);
+    case CURLM_OUT_OF_MEMORY:            return AVERROR(ENOMEM);
+    default:                             return AVERROR(EIO);
+    }
+}
+
+static int curlmcode_to_curlcode(CURLMcode code)
+{
+    switch (code) {
+    case CURLM_OK:                       return CURLE_OK;
+    case CURLM_UNKNOWN_OPTION:           return CURLE_UNKNOWN_OPTION;
+    case CURLM_OUT_OF_MEMORY:            return CURLE_OUT_OF_MEMORY;
+    case CURLM_ABORTED_BY_CALLBACK:      return CURLE_ABORTED_BY_CALLBACK;
+    case CURLM_UNRECOVERABLE_POLL:       return CURLE_UNRECOVERABLE_POLL;
+    default:                             return CURLE_FAILED_INIT;
     }
 }
 
@@ -220,6 +267,15 @@ static int is_recoverable(CURLcode code)
 /* curl callbacks (run on the loop thread)                                   */
 /* ------------------------------------------------------------------------- */
 
+static void update_status_locked(CurlContext *c, int status, CURLcode code)
+{
+    if (c->status)
+        return;
+
+    c->status = status;
+    c->curl_status = code;
+}
+
 static size_t write_callback(char *ptr, size_t size, size_t nmemb, void *userdata)
 {
     CurlContext *c = userdata;
@@ -236,6 +292,19 @@ static size_t write_callback(char *ptr, size_t size, size_t nmemb, void *userdat
     if (c->seek_queued) {
         pthread_mutex_unlock(&c->mutex);
         return bytes; /* discard */
+    }
+
+    /* Prevent overflow / non-addressable byte ranges */
+    if (bytes > INT64_MAX - c->request_start - c->request_received) {
+        av_log(c->h, AV_LOG_ERROR, "Server sent back more data than addressable "
+               "at offset %"PRId64"\n", c->request_start);
+        c->loop->num_errors++;
+        c->stream_ok = 0;
+        if (!c->status)
+            c->status = AVERROR(ERANGE);
+        pthread_cond_broadcast(&c->cond);
+        pthread_mutex_unlock(&c->mutex);
+        return CURL_WRITEFUNC_ERROR;
     }
 
     space = av_fifo_can_write(c->fifo);
@@ -255,31 +324,55 @@ static size_t write_callback(char *ptr, size_t size, size_t nmemb, void *userdat
     return bytes;
 }
 
-static int64_t parse_offset(const char *s)
+/* Return 1 if an offset was successfully parsed, 0 otherwise */
+static int parse_offset(const char *str, int64_t *out, const char **ptr)
 {
-    int64_t v = strtoll(s, NULL, 10);
-    return v < 0 ? -1 : v;
+    if (!av_isdigit(str[0]))
+        return 0;
+
+    errno = 0;
+    char *end;
+    int64_t val = strtoll(str, &end, 10);
+    if (errno == ERANGE)
+        return 0;
+
+    *out = val;
+    *ptr = end;
+    return 1;
 }
 
 /* "bytes $from-$to/$document_size" */
 static void parse_content_range(CurlContext *c, const char *v)
 {
+    int64_t start = -1, end = -1, total = -1;
     while (av_isspace(*v))
         v++;
 
-    if (av_strncasecmp(v, "bytes ", 6))
+    if (!av_stristart(v, "bytes ", &v))
         return;
 
-    const char *range = v + 6, *end;
-    if (range[0] != '*') {
-        c->hdr_content_start = parse_offset(range);
-        if ((end = strchr(range, '-')))
-            c->hdr_content_end = parse_offset(end + 1);
+    if (!av_strstart(v, "*", &v)) {
+        if (!parse_offset(v, &start, &v) ||
+            !av_strstart(v, "-", &v) ||
+            !parse_offset(v, &end, &v))
+            return;
     }
 
-    const char *slash = strchr(range, '/');
-    if (slash && slash[1] != '*')
-        c->hdr_content_total = parse_offset(slash + 1);
+    if (!av_strstart(v, "/", &v))
+        return;
+    if (!av_strstart(v, "*", &v) && !parse_offset(v, &total, &v))
+        return;
+
+    while (av_isspace(*v))
+        v++;
+
+    if (v[0] || (total < 0 && start < 0))
+        return; // reject trailing bytes or "*/*"
+
+    /* only set these fields if the header was recognized; ignore otherwise */
+    c->hdr_content_start = start;
+    c->hdr_content_end   = end;
+    c->hdr_content_total = total;
 }
 
 /* Parse a decimal header value, bounded by len since curl does not promise a
@@ -358,6 +451,42 @@ static void commit_icy_headers(CurlContext *c)
     av_dict_copy(&c->metadata, c->hdr_icy, 0);
 }
 
+static int verify_content_range(CurlContext *c, int64_t start, int64_t end,
+                                int64_t total)
+{
+    if (start < 0 || start != c->request_start) {
+        av_log(c->h, AV_LOG_ERROR, "Server sent back unexpected reply "
+               "with offset %"PRId64" (expected %"PRId64")\n",
+               start, c->request_start);
+        return 0;
+    }
+
+    if (end >= 0 && end < start) {
+        av_log(c->h, AV_LOG_ERROR, "Server sent back backwards content range "
+               "%"PRId64"-%"PRId64"\n", start, end);
+        return 0;
+    }
+
+    if (total >= 0 && (start >= total || end >= total)) {
+        av_log(c->h, AV_LOG_ERROR, "Server sent back content range "
+               "%"PRId64"-%"PRId64" that exceeds the total size "
+               "%"PRId64"\n", start, end, total);
+        return 0;
+    }
+
+    if (c->hdr_content_length >= 0 && end >= 0 &&
+        (c->hdr_content_length - 1 > INT64_MAX - start ||
+        start + (c->hdr_content_length - 1) != end))
+    {
+        av_log(c->h, AV_LOG_ERROR, "Server sent back content range "
+               "%"PRId64"-%"PRId64" that doesn't match the content length "
+               "%"PRId64"\n", start, end, c->hdr_content_length);
+        return 0;
+    }
+
+    return 1;
+}
+
 static size_t header_callback(char *ptr, size_t size, size_t nitems, void *userdata)
 {
     CurlContext *c = userdata;
@@ -374,6 +503,7 @@ static size_t header_callback(char *ptr, size_t size, size_t nitems, void *userd
         c->hdr_content_start = -1;
         c->hdr_content_end   = -1;
         c->hdr_content_total = -1;
+        c->hdr_content_length = -1;
         c->hdr_icy_metaint   = -1;
         av_dict_free(&c->hdr_icy);
         return len;
@@ -414,27 +544,44 @@ static size_t header_callback(char *ptr, size_t size, size_t nitems, void *userd
     if (status < 200 || (status >= 300 && status < 400))
         return len;
 
+    curl_off_t cl = -1;
+    if (curl_easy_getinfo(c->easy, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &cl) == CURLE_OK)
+        c->hdr_content_length = cl >= 0 ? cl : -1;
+
     pthread_mutex_lock(&c->mutex);
     if (status >= 200 && status < 300) {
         int64_t content_start = status == 206 ? c->hdr_content_start : 0;
-        /* The reply must start at the offset we requested: for follow-up
-         * requests always, for the initial one when an explicit nonzero
-         * offset was requested. */
-        if ((c->probed ? c->seekable : c->off > 0) &&
-            content_start != c->request_start) {
-            av_log(c->h, AV_LOG_ERROR, "Server sent back unexpected reply "
-                   "with offset %"PRId64" (expected %"PRId64")\n",
-                   content_start, c->request_start);
+        int64_t content_end   = status == 206 ? c->hdr_content_end : -1;
+        int64_t content_total = status == 206 ? c->hdr_content_total : c->hdr_content_length;
+        if (content_end < 0 && content_total > 0)
+            content_end = content_total - 1;
+
+        if (!verify_content_range(c, content_start, content_end, content_total)) {
             c->loop->num_errors++;
             c->stream_ok = 0;
-            if (!c->status)
-                c->status = AVERROR(EIO);
+            update_status_locked(c, AVERROR(EIO), CURLE_OK);
             pthread_cond_broadcast(&c->cond);
             pthread_mutex_unlock(&c->mutex);
             return len;
         }
 
+        /* Don't unlearn a known size when a reply omits it. */
+        if (!c->hdr_compressed && content_total >= 0)
+            c->content_size = content_total;
+
+        if (!c->hdr_compressed) {
+            int64_t total = content_total;
+            if (total < 0 && status != 206)
+                total = c->hdr_content_length;
+            /* Don't unlearn a known size when a reply omits it. */
+            if (total >= 0)
+                c->content_size = total;
+            if (content_end < 0)
+                content_end = c->content_size > 0 ? c->content_size - 1 : -1;
+        }
+
         c->stream_ok = 1;
+        c->request_end = content_end;
         /* Capture the post-redirect URL, this is exposed as "location" AVOption
          * for compatibility with http.c. */
         if (!c->probed) {
@@ -455,24 +602,6 @@ static size_t header_callback(char *ptr, size_t size, size_t nitems, void *userd
          * gives us free compression for other payloads like text playlist. */
         c->seekable = !c->hdr_compressed &&
                       (status == 206 || c->hdr_accept_ranges);
-        if (!c->hdr_compressed) {
-            int64_t total = c->hdr_content_total;
-            if (total < 0 && status != 206) {
-                curl_off_t cl = -1;
-                if (curl_easy_getinfo(c->easy, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T,
-                                      &cl) == CURLE_OK && cl >= 0)
-                    total = cl;
-            }
-            /* Don't unlearn a known size when a reply omits it. */
-            if (total >= 0)
-                c->content_size = total;
-        }
-        if (c->seekable) {
-            if (c->hdr_content_end >= 0)
-                c->request_end = c->hdr_content_end;
-            else
-                c->request_end = c->content_size > 0 ? c->content_size - 1 : -1;
-        }
         /* Apply the user override on every reply so re-evaluation of a
          * follow-up reply doesn't clobber it. */
         if (c->seekable_opt >= 0)
@@ -494,8 +623,7 @@ static size_t header_callback(char *ptr, size_t size, size_t nitems, void *userd
     } else {
         c->loop->num_errors++;
         c->stream_ok = 0;
-        if (!c->status)
-            c->status = ff_http_averror(status, AVERROR(EIO));
+        update_status_locked(c, ff_http_averror(status, AVERROR(EIO)), CURLE_OK);
     }
     c->probed = 1;
     pthread_cond_broadcast(&c->cond);
@@ -519,9 +647,13 @@ static int xferinfo_callback(void *userdata, curl_off_t dltotal, curl_off_t dlno
  * thread only. */
 static void start_request(CurlContext *c)
 {
+    char range[48];
+    const char *range_value = NULL;
+    CURLcode cc;
+    int ret;
+
     if (!c->probed || c->seekable) {
         int64_t start = c->request_start;
-        char range[48];
         int64_t request_size = c->request_size;
         if (c->is_initial && c->initial_request_size > 0)
             request_size = c->initial_request_size;
@@ -537,9 +669,16 @@ static void start_request(CurlContext *c)
         } else {
             snprintf(range, sizeof(range), "%"PRId64"-", start);
         }
-        curl_easy_setopt(c->easy, CURLOPT_RANGE, range);
-    } else {
-        curl_easy_setopt(c->easy, CURLOPT_RANGE, NULL);
+        range_value = range;
+    }
+    cc = curl_easy_setopt(c->easy, CURLOPT_RANGE, range_value);
+    if ((ret = curl_setopt_checked(c, "CURLOPT_RANGE", cc)) < 0) {
+        c->loop->num_errors++;
+        pthread_mutex_lock(&c->mutex);
+        update_status_locked(c, ret, cc);
+        pthread_cond_broadcast(&c->cond);
+        pthread_mutex_unlock(&c->mutex);
+        return;
     }
     c->loop->num_requests++;
     c->request_received = 0;
@@ -551,8 +690,7 @@ static void start_request(CurlContext *c)
                curl_multi_strerror(res));
         c->active = 0;
         pthread_mutex_lock(&c->mutex);
-        if (!c->status)
-            c->status = AVERROR(EIO);
+        update_status_locked(c, curlmcode_to_averror(res), curlmcode_to_curlcode(res));
         pthread_cond_broadcast(&c->cond);
         pthread_mutex_unlock(&c->mutex);
     }
@@ -593,10 +731,9 @@ static void on_done(CurlContext *c, CURLcode code)
     received = c->request_received;
     /* Advance past delivered bytes so a retry or seek resumes at the right offset. */
     if (received > INT64_MAX - c->request_start) {
-        if (!c->status)
-            c->status = AVERROR(EIO);
         received = 0;
         aborted  = 1;
+        update_status_locked(c, AVERROR(EIO), code);
         pthread_cond_broadcast(&c->cond);
     }
     c->request_start    += received;
@@ -609,9 +746,8 @@ static void on_done(CurlContext *c, CURLcode code)
         pthread_mutex_lock(&c->mutex);
         c->probed    = 1;
         c->stream_ok = 0;
-        if (!c->status)
-            c->status = curlcode_to_averror(code);
         c->loop->num_errors++;
+        update_status_locked(c, curlcode_to_averror(code), code);
         pthread_cond_broadcast(&c->cond);
         pthread_mutex_unlock(&c->mutex);
         return;
@@ -628,7 +764,6 @@ static void on_done(CurlContext *c, CURLcode code)
     }
 
     if (code == CURLE_OK && c->stream_ok) {
-        c->retry_count = 0;
         int64_t file_end = c->content_size > 0 ? c->content_size - 1 : -1;
         if (c->end_off > 0)
             file_end = FFMIN(file_end, c->end_off - 1);
@@ -639,6 +774,7 @@ static void on_done(CurlContext *c, CURLcode code)
         }
         pthread_mutex_lock(&c->mutex);
         c->status = AVERROR_EOF;
+        c->curl_status = CURLE_OK;
         pthread_cond_broadcast(&c->cond);
         pthread_mutex_unlock(&c->mutex);
         return;
@@ -649,20 +785,9 @@ static void on_done(CurlContext *c, CURLcode code)
         c->loop->num_errors++;
     }
 
-    /* Resume seekable transfers after a recoverable error. */
-    if (c->seekable && is_recoverable(code) &&
-        c->retry_count < c->max_retries) {
-        c->retry_count++;
-        av_log(c->h, AV_LOG_WARNING, "Retrying (#%d) from %"PRId64"\n",
-               c->retry_count, c->request_start);
-        start_request(c);
-        return;
-    }
-
     /* Unhandled generic curl error */
     pthread_mutex_lock(&c->mutex);
-    if (!c->status)
-        c->status = curlcode_to_averror(code);
+    update_status_locked(c, curlcode_to_averror(code), code);
     pthread_cond_broadcast(&c->cond);
     pthread_mutex_unlock(&c->mutex);
 }
@@ -715,12 +840,13 @@ static void execute_command(CurlLoop *loop, CurlCmd *cmd)
         pthread_mutex_lock(&c->mutex);
         av_fifo_reset2(c->fifo);
         const int was_paused = c->paused;
+        c->aborted = 0;
         c->paused = 0;
         c->status = 0;
+        c->curl_status = 0;
         pthread_mutex_unlock(&c->mutex);
         c->request_start    = cmd->pos;
         c->request_received = 0;
-        c->retry_count      = 0;
         if (!c->seek_queued)
             start_request(c);
         else if (was_paused)
@@ -818,6 +944,20 @@ static int curl_dispatch(CurlLoop *loop, enum cmd_kind kind, CurlContext *c,
     return 0;
 }
 
+static void share_lock_callback(CURL *handle, curl_lock_data data,
+                                curl_lock_access access, void *userdata)
+{
+    CurlLoop *loop = userdata;
+    pthread_mutex_lock(&loop->mutex);
+}
+
+static void share_unlock_callback(CURL *handle, curl_lock_data data,
+                                  void *userdata)
+{
+    CurlLoop *loop = userdata;
+    pthread_mutex_unlock(&loop->mutex);
+}
+
 static CurlLoop *curl_loop_create(AVFormatContext *avfc)
 {
     CurlLoop *loop = av_mallocz(sizeof(*loop));
@@ -843,6 +983,9 @@ static CurlLoop *curl_loop_create(AVFormatContext *avfc)
     loop->share = curl_share_init();
     if (!loop->share)
         goto fail3;
+    curl_share_setopt(loop->share, CURLSHOPT_USERDATA,   loop);
+    curl_share_setopt(loop->share, CURLSHOPT_LOCKFUNC,   share_lock_callback);
+    curl_share_setopt(loop->share, CURLSHOPT_UNLOCKFUNC, share_unlock_callback);
     curl_share_setopt(loop->share, CURLSHOPT_SHARE, CURL_LOCK_DATA_COOKIE);
     curl_share_setopt(loop->share, CURLSHOPT_SHARE, CURL_LOCK_DATA_HSTS);
 
@@ -967,43 +1110,56 @@ static int debug_callback(CURL *easy, curl_infotype type, char *data,
     return 0;
 }
 
-/* Build the custom request header list from the referer and headers options. */
-static struct curl_slist *build_headers(CurlContext *c)
+static int slist_append(struct curl_slist **list, const char *str)
 {
-    struct curl_slist *list = NULL;
-    int user_set_icy = 0;
+    struct curl_slist *tmp = curl_slist_append(*list, str);
+    if (!tmp)
+        return AVERROR(ENOMEM);
+    *list = tmp;
+    return 0;
+}
+
+/* Build the custom request header list from the referer and headers options. */
+static int build_headers(CurlContext *c)
+{
+    int user_set_icy = 0, ret = 0;
 
     if (c->referer && c->referer[0]) {
         char *h = av_asprintf("Referer: %s", c->referer);
-        if (h) {
-            list = curl_slist_append(list, h);
-            av_free(h);
-        }
+        if (!h)
+            return AVERROR(ENOMEM);
+        ret = slist_append(&c->header_list, h);
+        av_free(h);
+        if (ret < 0)
+            return ret;
     }
     if (c->headers && c->headers[0]) {
         char *copy = av_strdup(c->headers);
         char *line, *saveptr = NULL;
-        if (copy) {
-            for (line = av_strtok(copy, "\r\n", &saveptr); line;
-                 line = av_strtok(NULL, "\r\n", &saveptr)) {
-                if (!av_strncasecmp(line, "Icy-MetaData:", 13))
-                    user_set_icy = 1;
-                list = curl_slist_append(list, line);
-            }
-            av_free(copy);
+        if (!copy)
+            return AVERROR(ENOMEM);
+        for (line = av_strtok(copy, "\r\n", &saveptr); line && ret >= 0;
+             line = av_strtok(NULL, "\r\n", &saveptr)) {
+            if (!av_strncasecmp(line, "Icy-MetaData:", 13))
+                user_set_icy = 1;
+            ret = slist_append(&c->header_list, line);
         }
+        av_free(copy);
+        if (ret < 0)
+            return ret;
     }
     /* libcurl does not deduplicate the list, so only add ours if the user
      * did not already ask for one. */
     if (c->icy && !user_set_icy)
-        list = curl_slist_append(list, "Icy-MetaData: 1");
-    return list;
+        return slist_append(&c->header_list, "Icy-MetaData: 1");
+    return 0;
 }
 
 static int setup_protocols(CurlContext *c)
 {
     const char *wl = c->h->protocol_whitelist;
     const char *bl = c->h->protocol_blacklist;
+    int ret;
     if (!wl && !bl)
         return 0;
 
@@ -1035,96 +1191,134 @@ static int setup_protocols(CurlContext *c)
         return AVERROR(EINVAL);
     }
 
-    curl_easy_setopt(c->easy, CURLOPT_PROTOCOLS_STR, bp.str);
-    curl_easy_setopt(c->easy, CURLOPT_REDIR_PROTOCOLS_STR, bp.str);
+    ret = curl_setopt_checked(c, "CURLOPT_PROTOCOLS_STR",
+                            curl_easy_setopt(c->easy, CURLOPT_PROTOCOLS_STR, bp.str));
+    if (!ret)
+        ret = curl_setopt_checked(c, "CURLOPT_REDIR_PROTOCOLS_STR",
+                                  curl_easy_setopt(c->easy, CURLOPT_REDIR_PROTOCOLS_STR, bp.str));
     av_bprint_finalize(&bp, NULL);
-    return 0;
+    return ret;
 }
 
-static void setup_curl(CurlContext *c)
+/* A failed setopt used to be ignored, so an unsupported option such as
+ * -http_version 3 on a libcurl built without HTTP/3 was silently dropped and
+ * the request went out with curl's default version. */
+#define CURL_SETOPT(opt, val)                                               \
+    do {                                                                    \
+        int ret_ = curl_setopt_checked(c, #opt,                            \
+                                       curl_easy_setopt(e, opt, val));      \
+        if (ret_ < 0)                                                       \
+            return ret_;                                                    \
+    } while (0)
+
+static int setup_curl(CurlContext *c)
 {
+    const curl_version_info_data *info = curl_version_info(CURLVERSION_NOW);
     CURL *e = c->easy;
+    CURLcode cc;
+    int ret;
     const char *url = c->h->filename;
 
     /* Drop an optional "libcurl:" prefix that forces this protocol. */
     av_strstart(url, "libcurl:", &url);
 
-    curl_easy_setopt(e, CURLOPT_URL, url);
-    curl_easy_setopt(e, CURLOPT_PRIVATE, c);
-    curl_easy_setopt(e, CURLOPT_NOSIGNAL, 1L);
-    curl_easy_setopt(e, CURLOPT_SHARE, c->loop->share);
+    CURL_SETOPT(CURLOPT_URL, url);
+    CURL_SETOPT(CURLOPT_PRIVATE, c);
+    CURL_SETOPT(CURLOPT_NOSIGNAL, 1L);
+    CURL_SETOPT(CURLOPT_SHARE, c->loop->share);
 
-    curl_easy_setopt(e, CURLOPT_WRITEFUNCTION, write_callback);
-    curl_easy_setopt(e, CURLOPT_WRITEDATA, c);
-    curl_easy_setopt(e, CURLOPT_HEADERFUNCTION, header_callback);
-    curl_easy_setopt(e, CURLOPT_HEADERDATA, c);
+    CURL_SETOPT(CURLOPT_WRITEFUNCTION, write_callback);
+    CURL_SETOPT(CURLOPT_WRITEDATA, c);
+    CURL_SETOPT(CURLOPT_HEADERFUNCTION, header_callback);
+    CURL_SETOPT(CURLOPT_HEADERDATA, c);
 
-    curl_easy_setopt(e, CURLOPT_NOPROGRESS, 0L);
-    curl_easy_setopt(e, CURLOPT_XFERINFOFUNCTION, xferinfo_callback);
-    curl_easy_setopt(e, CURLOPT_XFERINFODATA, c);
+    CURL_SETOPT(CURLOPT_NOPROGRESS, 0L);
+    CURL_SETOPT(CURLOPT_XFERINFOFUNCTION, xferinfo_callback);
+    CURL_SETOPT(CURLOPT_XFERINFODATA, c);
 
     if (av_log_get_level() >= AV_LOG_DEBUG) {
-        curl_easy_setopt(e, CURLOPT_VERBOSE, 1L);
-        curl_easy_setopt(e, CURLOPT_DEBUGFUNCTION, debug_callback);
-        curl_easy_setopt(e, CURLOPT_DEBUGDATA, c);
+        CURL_SETOPT(CURLOPT_VERBOSE, 1L);
+        CURL_SETOPT(CURLOPT_DEBUGFUNCTION, debug_callback);
+        CURL_SETOPT(CURLOPT_DEBUGDATA, c);
     }
 
-    curl_easy_setopt(e, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(e, CURLOPT_MAXREDIRS, (long)c->max_redirects);
-    curl_easy_setopt(e, CURLOPT_HTTP_VERSION, (long)c->http_version);
-    curl_easy_setopt(e, CURLOPT_TCP_KEEPALIVE, c->multiple_requests ? 1L : 0L);
-    curl_easy_setopt(e, CURLOPT_FORBID_REUSE,  c->multiple_requests ? 0L : 1L);
-    curl_easy_setopt(e, CURLOPT_HSTS_CTRL, (long)CURLHSTS_ENABLE);
-    curl_easy_setopt(e, CURLOPT_ACCEPT_ENCODING,
-                     c->off > 0 || c->end_off > 0 ? "identity" : "");
+    CURL_SETOPT(CURLOPT_FOLLOWLOCATION, 1L);
+    CURL_SETOPT(CURLOPT_MAXREDIRS, (long)c->max_redirects);
+    CURL_SETOPT(CURLOPT_HTTP_VERSION, (long)c->http_version);
+    CURL_SETOPT(CURLOPT_TCP_KEEPALIVE, c->multiple_requests ? 1L : 0L);
+    CURL_SETOPT(CURLOPT_FORBID_REUSE,  c->multiple_requests ? 0L : 1L);
+    if (info->features & CURL_VERSION_HSTS)
+        CURL_SETOPT(CURLOPT_HSTS_CTRL, (long)CURLHSTS_ENABLE);
+    CURL_SETOPT(CURLOPT_ACCEPT_ENCODING,
+                c->off > 0 || c->end_off > 0 ? "identity" : "");
     if (c->connect_timeout > 0)
-        curl_easy_setopt(e, CURLOPT_CONNECTTIMEOUT_MS,
-                         (long)c->connect_timeout * 1000);
+        CURL_SETOPT(CURLOPT_CONNECTTIMEOUT_MS,
+                    (long)c->connect_timeout * 1000);
 
     if (c->user_agent && c->user_agent[0])
-        curl_easy_setopt(e, CURLOPT_USERAGENT, c->user_agent);
+        CURL_SETOPT(CURLOPT_USERAGENT, c->user_agent);
     if (c->http_proxy && c->http_proxy[0])
-        curl_easy_setopt(e, CURLOPT_PROXY, c->http_proxy);
+        CURL_SETOPT(CURLOPT_PROXY, c->http_proxy);
 
-    curl_easy_setopt(e, CURLOPT_SSL_OPTIONS, (long)CURLSSLOPT_NATIVE_CA);
-    curl_easy_setopt(e, CURLOPT_SSL_VERIFYPEER, c->tls_verify ? 1L : 0L);
-    curl_easy_setopt(e, CURLOPT_SSL_VERIFYHOST, c->tls_verify ? 2L : 0L);
+    if (info->features & CURL_VERSION_SSL)
+        CURL_SETOPT(CURLOPT_SSL_OPTIONS, (long)CURLSSLOPT_NATIVE_CA);
+    CURL_SETOPT(CURLOPT_SSL_VERIFYPEER, c->tls_verify ? 1L : 0L);
+    CURL_SETOPT(CURLOPT_SSL_VERIFYHOST, c->tls_verify ? 2L : 0L);
     if (c->ca_file)
-        curl_easy_setopt(e, CURLOPT_CAINFO, c->ca_file);
+        CURL_SETOPT(CURLOPT_CAINFO, c->ca_file);
     if (c->cert_file)
-        curl_easy_setopt(e, CURLOPT_SSLCERT, c->cert_file);
+        CURL_SETOPT(CURLOPT_SSLCERT, c->cert_file);
     if (c->key_file)
-        curl_easy_setopt(e, CURLOPT_SSLKEY, c->key_file);
+        CURL_SETOPT(CURLOPT_SSLKEY, c->key_file);
 
-    curl_easy_setopt(e, CURLOPT_COOKIEFILE, "");
+    /* The cookie engine is optional unless the user supplied cookies. */
+    cc = curl_easy_setopt(e, CURLOPT_COOKIEFILE, "");
+    if ((cc != CURLE_UNKNOWN_OPTION && cc != CURLE_NOT_BUILT_IN) ||
+        (c->cookies && c->cookies[0])) {
+        ret = curl_setopt_checked(c, "CURLOPT_COOKIEFILE", cc);
+        if (ret < 0)
+            return ret;
+    }
     if (c->cookies && c->cookies[0]) {
         char *copy = av_strdup(c->cookies);
         char *line, *saveptr = NULL;
-        if (copy) {
-            for (line = av_strtok(copy, "\r\n", &saveptr); line;
-                 line = av_strtok(NULL, "\r\n", &saveptr)) {
-                char *sc = av_asprintf("Set-Cookie: %s", line);
-                if (sc) {
-                    curl_easy_setopt(e, CURLOPT_COOKIELIST, sc);
-                    av_free(sc);
-                }
+        if (!copy)
+            return AVERROR(ENOMEM);
+        for (line = av_strtok(copy, "\r\n", &saveptr); line;
+             line = av_strtok(NULL, "\r\n", &saveptr)) {
+            char *sc = av_asprintf("Set-Cookie: %s", line);
+
+            if (!sc) {
+                av_free(copy);
+                return AVERROR(ENOMEM);
             }
-            av_free(copy);
+            cc = curl_easy_setopt(e, CURLOPT_COOKIELIST, sc);
+            av_free(sc);
+            if ((ret = curl_setopt_checked(c, "CURLOPT_COOKIELIST", cc)) < 0) {
+                av_free(copy);
+                return ret;
+            }
         }
+        av_free(copy);
     }
 
-    c->header_list = build_headers(c);
+    if ((ret = build_headers(c)) < 0)
+        return ret;
     if (c->header_list)
-        curl_easy_setopt(e, CURLOPT_HTTPHEADER, c->header_list);
+        CURL_SETOPT(CURLOPT_HTTPHEADER, c->header_list);
 
     /* Shoutcast v1 answers "ICY 200 OK", which curl would otherwise reject as
      * HTTP/0.9 before any header reaches header_callback(). */
     if (c->icy_status) {
-        c->alias_list = curl_slist_append(NULL, "ICY 200");
-        if (c->alias_list)
-            curl_easy_setopt(e, CURLOPT_HTTP200ALIASES, c->alias_list);
+        if ((ret = slist_append(&c->alias_list, "ICY 200")) < 0)
+            return ret;
+        CURL_SETOPT(CURLOPT_HTTP200ALIASES, c->alias_list);
     }
+
+    return 0;
 }
+
+#undef CURL_SETOPT
 
 static void curl_cond_wait(CurlContext *c)
 {
@@ -1157,6 +1351,56 @@ static int wait_for_probe(CurlContext *c)
     pthread_mutex_unlock(&c->mutex);
 
     return ret;
+}
+
+/* Scales by the recurrence relationship x := 2x + 1, i.e. 2^n - 1 */
+static int64_t retry_delay(CurlContext *c)
+{
+    int64_t factor = INT64_MAX >> FFMAX(63 - c->retry_count, 0);
+    if (factor >= CURL_RETRY_MAX_US / CURL_RETRY_BASE_US)
+        return CURL_RETRY_MAX_US;
+    return factor * CURL_RETRY_BASE_US;
+}
+
+static int retry_request_locked(URLContext *h, int nonblock)
+{
+    CurlContext *c = h->priv_data;
+    const int status = c->status;
+    const CURLcode code = c->curl_status;
+    pthread_mutex_unlock(&c->mutex);
+
+    if (!c->retry_time) {
+        if (c->retry_count >= c->max_retries) {
+            av_log(h, AV_LOG_ERROR, "Maximum number of retries (%d) reached\n",
+                c->max_retries);
+            return status;
+        }
+
+        const int64_t delay = retry_delay(c);
+        c->retry_time = av_gettime_relative() + delay;
+        c->retry_count++;
+
+        av_log(h, AV_LOG_WARNING, "Retrying (#%d) from %"PRId64" in %.3fs "
+               "after: %s (%s)\n", c->retry_count, c->logical_pos,
+               delay * 1e-6, av_err2str(status),
+               curl_easy_strerror(code));
+    }
+
+    const int64_t sleep_us = c->retry_time - av_gettime_relative();
+    if (sleep_us > 0 && !nonblock) {
+        av_usleep(FFMIN(sleep_us, CURL_WAIT_US));
+    } else if (sleep_us <= 0) {
+        /* Use a synchronous request to ensure that the seek is registered, and
+         * the reset of c->state is observable, before the next libcurl_read()
+         * call, otherwise this might hit the exact same retry path a second
+         * time. */
+        int ret = curl_dispatch(c->loop, CMD_SEEK, c, c->logical_pos, 1);
+        if (ret < 0)
+            return ret;
+        c->retry_time = 0;
+    }
+
+    return AVERROR(EAGAIN); /* allow caller to handle interrupts and retry */
 }
 
 static int libcurl_open(URLContext *h, const char *url, int flags,
@@ -1216,7 +1460,9 @@ static int libcurl_open(URLContext *h, const char *url, int flags,
     if (ret < 0)
         goto fail;
 
-    setup_curl(c);
+    ret = setup_curl(c);
+    if (ret < 0)
+        goto fail;
 
     ret = curl_dispatch(c->loop, CMD_ADD, c, 0, 0);
     if (ret < 0)
@@ -1311,9 +1557,14 @@ static int libcurl_read(URLContext *h, unsigned char *buf, int size)
             av_fifo_read(c->fifo, buf, ret);
             c->icy_data_read += ret;
             c->logical_pos   += ret;
+            c->retry_count    = 0;
+            c->retry_time     = 0;
             break;
         }
+
         if (c->status) {
+            if (c->seekable && is_recoverable(c->curl_status))
+                return retry_request_locked(h, nonblock);
             if (c->status == AVERROR_EOF && c->icy_block_len >= 0)
                 av_log(h, AV_LOG_WARNING,
                        "Stream ended inside an ICY metadata block\n");
@@ -1384,6 +1635,8 @@ static int64_t libcurl_seek(URLContext *h, int64_t pos, int whence)
      * surfaces on the following url_read(). */
     curl_dispatch(c->loop, CMD_SEEK, c, newpos, 1);
     c->logical_pos = newpos;
+    c->retry_count = 0;
+    c->retry_time = 0;
 
     return newpos;
 }

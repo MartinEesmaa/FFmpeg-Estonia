@@ -1106,12 +1106,24 @@ fate-swr-custom-rematrix: REF = 2a14a44deb4ae26e3b474ddbfbc048f8
 
 FATE_SWR += $(FATE_SWR_CUSTOM_REMATRIX-yes)
 
-FATE_SWR_22_2_LAYOUTS   = 9.1.6 9.1.4 7.2.3 7.1.4 7.1.2 5.1.4 5.1.2 7.1 5.1 stereo mono
-FATE_SWR_9_1_6_LAYOUTS  = 9.1.4 7.2.3 7.1.4 7.1.2 5.1.4 5.1.2 7.1 5.1 stereo mono
+FATE_SWR_S32_SRC = mod(n*$(1)\,4294967296)/2147483648-1
+FATE_SWR_S32_7_1 = $(call FATE_SWR_S32_SRC,1103515245)|$(call FATE_SWR_S32_SRC,22695477)|$(call FATE_SWR_S32_SRC,214013)|$(call FATE_SWR_S32_SRC,1664525)|$(call FATE_SWR_S32_SRC,134775813)|$(call FATE_SWR_S32_SRC,69069)|$(call FATE_SWR_S32_SRC,1812433253)|$(call FATE_SWR_S32_SRC,2654435761)
+
+FATE_SWR_CUSTOM_REORDER-$(call ENCMUX, PCM_S32LE, PCM_S32LE, AEVALSRC_FILTER ARESAMPLE_FILTER AFORMAT_FILTER FILE_PROTOCOL) += fate-swr-custom-reorder
+fate-swr-custom-reorder: CMD = md5 -filter_complex "aevalsrc=$(FATE_SWR_S32_7_1):c=7.1:d=0.5,aresample,aformat=f=s32:cl=7.1,aresample,aformat=f=s32:cl=FR+FL+FC+LFE+SL+SR+BL+BR[OUT]" -map [OUT] -f s32le
+fate-swr-custom-reorder: CMP = oneline
+fate-swr-custom-reorder: REF = 3621f90f05eb313858791b3915b9ca18
+
+FATE_SWR += $(FATE_SWR_CUSTOM_REORDER-yes)
+
+FATE_SWR_22_2_LAYOUTS   = 9.1.6 9.1.4 7.2.3 7.1.6 7.1.4 7.1.2 5.1.6 5.1.4 5.1.2 7.1 5.1 stereo mono
+FATE_SWR_9_1_6_LAYOUTS  = 9.1.4 7.2.3 7.1.6 7.1.4 7.1.2 5.1.6 5.1.4 5.1.2 7.1 5.1 stereo mono
 FATE_SWR_9_1_4_LAYOUTS  = 7.2.3 7.1.4 7.1.2 5.1.4 5.1.2 7.1 5.1 stereo mono
 FATE_SWR_7_2_3_LAYOUTS  = 7.1.4 7.1.2 5.1.4 5.1.2 7.1 5.1 stereo mono
+FATE_SWR_7_1_6_LAYOUTS  = 7.1.4 7.1.2 5.1.6 5.1.4 5.1.2 7.1 5.1 stereo mono
 FATE_SWR_7_1_4_LAYOUTS  = 7.1.2 5.1.4 5.1.2 7.1 5.1 stereo mono
 FATE_SWR_7_1_2_LAYOUTS  = 5.1.4 5.1.2 7.1 5.1 stereo mono
+FATE_SWR_5_1_6_LAYOUTS  = 5.1.4 5.1.2 7.1 5.1 stereo mono
 FATE_SWR_5_1_4_LAYOUTS  = 5.1.2 7.1 5.1 stereo mono
 FATE_SWR_5_1_2_LAYOUTS  = 7.1 5.1 stereo mono
 FATE_SWR_7_1_LAYOUTS    = 5.1 stereo mono
@@ -1130,8 +1142,10 @@ $(call SWR_REMATRIX_TEST,$(FATE_SWR_22_2_LAYOUTS),22.2)
 $(call SWR_REMATRIX_TEST,$(FATE_SWR_9_1_6_LAYOUTS),9.1.6)
 $(call SWR_REMATRIX_TEST,$(FATE_SWR_9_1_4_LAYOUTS),9.1.4)
 $(call SWR_REMATRIX_TEST,$(FATE_SWR_7_2_3_LAYOUTS),7.2.3)
+$(call SWR_REMATRIX_TEST,$(FATE_SWR_7_1_6_LAYOUTS),7.1.6)
 $(call SWR_REMATRIX_TEST,$(FATE_SWR_7_1_4_LAYOUTS),7.1.4)
 $(call SWR_REMATRIX_TEST,$(FATE_SWR_7_1_2_LAYOUTS),7.1.2)
+$(call SWR_REMATRIX_TEST,$(FATE_SWR_5_1_6_LAYOUTS),5.1.6)
 $(call SWR_REMATRIX_TEST,$(FATE_SWR_5_1_4_LAYOUTS),5.1.4)
 $(call SWR_REMATRIX_TEST,$(FATE_SWR_5_1_2_LAYOUTS),5.1.2)
 $(call SWR_REMATRIX_TEST,$(FATE_SWR_7_1_LAYOUTS),7.1)
@@ -1146,12 +1160,52 @@ FATE_SWR_REMATRIX-$(CONFIG_SWRESAMPLE) += fate-swr-rematrix-unused-output
 fate-swr-rematrix-unused-output: libswresample/tests/rematrix$(EXESUF)
 fate-swr-rematrix-unused-output: CMD = run libswresample/tests/rematrix$(EXESUF) 5.1 FL+UNSD+FR+UNSD
 
+FATE_SWR_REMATRIX-$(CONFIG_SWRESAMPLE) += fate-swr-rematrix-unused-mono-input
+fate-swr-rematrix-unused-mono-input: libswresample/tests/rematrix$(EXESUF)
+fate-swr-rematrix-unused-mono-input: CMD = run libswresample/tests/rematrix$(EXESUF) BL+UNSD+UNSD 5.1
+
+FATE_SWR_REMATRIX-$(CONFIG_SWRESAMPLE) += fate-swr-rematrix-unused-mono-output
+fate-swr-rematrix-unused-mono-output: libswresample/tests/rematrix$(EXESUF)
+fate-swr-rematrix-unused-mono-output: CMD = run libswresample/tests/rematrix$(EXESUF) stereo UNSD+FR
+
+FATE_SWR_REMATRIX-$(CONFIG_SWRESAMPLE) += fate-swr-rematrix-downmix-input
+fate-swr-rematrix-downmix-input: libswresample/tests/rematrix$(EXESUF)
+fate-swr-rematrix-downmix-input: CMD = run libswresample/tests/rematrix$(EXESUF) DR+DL 5.1
+
+FATE_SWR_REMATRIX-$(CONFIG_SWRESAMPLE) += fate-swr-rematrix-downmix-output
+fate-swr-rematrix-downmix-output: libswresample/tests/rematrix$(EXESUF)
+fate-swr-rematrix-downmix-output: CMD = run libswresample/tests/rematrix$(EXESUF) 5.1 DR+UNSD+DL
+
+FATE_SWR_UNUSED_8  = UNSD+UNSD+UNSD+UNSD+UNSD+UNSD+UNSD+UNSD
+FATE_SWR_UNUSED_31 = $(FATE_SWR_UNUSED_8)+$(FATE_SWR_UNUSED_8)+$(FATE_SWR_UNUSED_8)+UNSD+UNSD+UNSD+UNSD+UNSD+UNSD+UNSD
+
+FATE_SWR_REMATRIX-$(CONFIG_SWRESAMPLE) += fate-swr-rematrix-unused-64
+fate-swr-rematrix-unused-64: libswresample/tests/rematrix$(EXESUF)
+fate-swr-rematrix-unused-64: CMD = run libswresample/tests/rematrix$(EXESUF) 5.1 $(FATE_SWR_UNUSED_31)+FL+FR+$(FATE_SWR_UNUSED_31)
+
+FATE_SWR_REMATRIX-$(CONFIG_SWRESAMPLE) += fate-swr-rematrix-reorder
+fate-swr-rematrix-reorder: libswresample/tests/rematrix$(EXESUF)
+fate-swr-rematrix-reorder: CMD = run libswresample/tests/rematrix$(EXESUF) BL+BR BR+BL
+
+FATE_SWR_REMATRIX-$(CONFIG_SWRESAMPLE) += fate-swr-rematrix-reorder-unused
+fate-swr-rematrix-reorder-unused: libswresample/tests/rematrix$(EXESUF)
+fate-swr-rematrix-reorder-unused: CMD = run libswresample/tests/rematrix$(EXESUF) FC+UNSD+FL FL+FC+UNSD
+
 FATE_SWR += $(FATE_SWR_REMATRIX-yes)
 fate-swr-rematrix: $(FATE_SWR_REMATRIX-yes)
 
 FATE_SWR_REALLOC-$(CONFIG_SWRESAMPLE) += fate-swr-resample-realloc
 fate-swr-resample-realloc: libswresample/tests/swresample_resample_realloc$(EXESUF)
 fate-swr-resample-realloc: CMD = run libswresample/tests/swresample_resample_realloc$(EXESUF)
+
+# A subset of the 10000 default cases to keep the run time short
+FATE_SWR_SELFTEST-$(CONFIG_SWRESAMPLE) += fate-swr-selftest
+fate-swr-selftest: libswresample/tests/swresample$(EXESUF)
+fate-swr-selftest: CMD = run libswresample/tests/swresample$(EXESUF) 1000
+fate-swr-selftest: CMP = null
+
+FATE-yes += $(FATE_SWR_SELFTEST-yes)
+fate-swr: $(FATE_SWR_SELFTEST-yes)
 
 FATE_SWR += $(FATE_SWR_REALLOC-yes)
 

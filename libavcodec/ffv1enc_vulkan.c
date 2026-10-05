@@ -102,7 +102,17 @@ typedef struct VulkanEncodeFFv1Context {
     uint32_t max_pixels_per_slice;
     int ppi;
     int chunks;
+
+    FFVkBuffer order_buf;
+    uint32_t prev_size[MAX_SLICES];
+    int have_prev;
 } VulkanEncodeFFv1Context;
+
+static int cmp_slice_order(const void *a, const void *b)
+{
+    uint64_t x = *(const uint64_t *)a, y = *(const uint64_t *)b;
+    return (x < y) - (x > y);
+}
 
 extern const char *ff_source_common_comp;
 extern const char *ff_source_rangecoder_comp;
@@ -672,6 +682,35 @@ static int vulkan_encode_ffv1_submit_frame(AVCodecContext *avctx,
                                         0, remap_data_size*f->slice_count,
                                         VK_FORMAT_UNDEFINED);
 
+    /* Encode the slices that were largest in the previous frame first: they
+     * get the oldest waves, which have issue priority when several waves
+     * share a SIMD */
+    {
+        uint64_t order[MAX_SLICES];
+        size_t order_off = fd->idx*f->max_slice_count*sizeof(uint32_t);
+        uint32_t *dst = (uint32_t *)(fv->order_buf.mapped_mem + order_off);
+        for (int i = 0; i < f->slice_count; i++)
+            order[i] = (uint64_t)(fv->have_prev ? fv->prev_size[i] : 0) << 32 |
+                       (UINT32_MAX - i);
+        qsort(order, f->slice_count, sizeof(*order), cmp_slice_order);
+        for (int i = 0; i < f->slice_count; i++)
+            dst[i] = UINT32_MAX - (uint32_t)order[i];
+        if (!(fv->order_buf.flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) {
+            VkMappedMemoryRange flush_data = {
+                .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+                .memory = fv->order_buf.mem,
+                .offset = 0,
+                .size = VK_WHOLE_SIZE,
+            };
+            vk->FlushMappedMemoryRanges(fv->s.hwctx->act_dev, 1, &flush_data);
+        }
+        ff_vk_shader_update_desc_buffer(&fv->s, exec, &fv->enc,
+                                        1, 6, 0,
+                                        &fv->order_buf,
+                                        order_off, f->slice_count*sizeof(uint32_t),
+                                        VK_FORMAT_UNDEFINED);
+    }
+
     ff_vk_exec_bind_shader(&fv->s, exec, &fv->enc);
     ff_vk_shader_update_push_const(&fv->s, exec, &fv->enc,
                                    VK_SHADER_STAGE_COMPUTE_BIT,
@@ -729,18 +768,24 @@ static int get_packet(AVCodecContext *avctx, FFVkExecContext *exec,
     /* Make sure the encode + gather submission is done */
     ff_vk_exec_wait(&fv->s, exec);
 
-    /* Invalidate the packed size if needed */
-    size_t total_off = (fd->idx*(f->max_slice_count + 1) + f->slice_count)*sizeof(uint32_t);
+    /* Invalidate the slice sizes and the packed size if needed */
+    size_t res_off = fd->idx*(f->max_slice_count + 1)*sizeof(uint32_t);
+    size_t total_off = res_off + f->slice_count*sizeof(uint32_t);
     if (!(fv->results_buf.flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) {
         VkMappedMemoryRange invalidate_data = {
             .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
             .memory = fv->results_buf.mem,
-            .offset = total_off,
-            .size = sizeof(uint32_t),
+            .offset = 0,
+            .size = VK_WHOLE_SIZE,
         };
         vk->InvalidateMappedMemoryRanges(fv->s.hwctx->act_dev,
                                          1, &invalidate_data);
     }
+
+    /* Keep the slice sizes for the next frame's dispatch order */
+    memcpy(fv->prev_size, fv->results_buf.mapped_mem + res_off,
+           f->slice_count*sizeof(uint32_t));
+    fv->have_prev = 1;
 
     pkt->size = AV_RN32(fv->results_buf.mapped_mem + total_off);
     av_log(avctx, AV_LOG_VERBOSE, "Encoded data: %iMiB\n", pkt->size / (1024*1024));
@@ -1063,9 +1108,11 @@ static int init_encode_shader(AVCodecContext *avctx, VkSpecializationInfo *sl)
     FFV1Context *f = &fv->ctx;
     FFVulkanShader *shd = &fv->enc;
 
-    uint32_t wg_x = fv->ctx.ac != AC_GOLOMB_RICE ? CONTEXT_SIZE : 1;
+    uint32_t subgroup_size;
+    uint32_t lanes = ff_ffv1_vk_rc_lanes(&fv->s, &subgroup_size);
     ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl,
-                      (uint32_t []) { wg_x, 1, 1 }, 0);
+                      (uint32_t []) { fv->ctx.ac != AC_GOLOMB_RICE ? lanes : 1, 1, 1 },
+                      fv->ctx.ac != AC_GOLOMB_RICE ? subgroup_size : 0);
 
     ff_vk_shader_add_push_const(shd, 0, sizeof(FFv1ShaderParams),
                                 VK_SHADER_STAGE_COMPUTE_BIT);
@@ -1112,9 +1159,12 @@ static int init_encode_shader(AVCodecContext *avctx, VkSpecializationInfo *sl)
             .type   = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
             .stages = VK_SHADER_STAGE_COMPUTE_BIT,
         },
+        { /* slice_order */
+            .type   = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .stages = VK_SHADER_STAGE_COMPUTE_BIT,
+        },
     };
-    ff_vk_shader_add_descriptor_set(&fv->s, shd, desc_set,
-                                    4 + fv->is_rgb + !!f->remap_mode, 0);
+    ff_vk_shader_add_descriptor_set(&fv->s, shd, desc_set, 7, 0);
 
     if (f->bayer) {
         if (fv->ctx.ac == AC_GOLOMB_RICE)
@@ -1319,7 +1369,7 @@ static av_cold int vulkan_encode_ffv1_init(AVCodecContext *avctx)
                        !fv->force_pcm && fv->optimize_rct && !f->bayer;
 
     /* Init shader specialization consts */
-    SPEC_LIST_CREATE(sl, 19, 19*sizeof(uint32_t))
+    SPEC_LIST_CREATE(sl, 20, 20*sizeof(uint32_t))
     SPEC_LIST_ADD(sl,  0, 32, RGB_LINECACHE);
     SPEC_LIST_ADD(sl,  1, 32, f->ec);
     ff_ffv1_vk_set_common_sl(avctx, f, sl, fv->s.frames->sw_format);
@@ -1327,6 +1377,11 @@ static av_cold int vulkan_encode_ffv1_init(AVCodecContext *avctx)
     SPEC_LIST_ADD(sl, 16, 32, fv->optimize_rct);
     SPEC_LIST_ADD(sl, 17, 32, f->context_model);
     SPEC_LIST_ADD(sl, 18, 32, f->remap_mode);
+
+    if (f->ac != AC_GOLOMB_RICE) {
+        const int16_t (*qt)[MAX_QUANT_TABLE_SIZE] = f->quant_tables[f->context_model];
+        SPEC_LIST_ADD(sl, 19, 32, qt[3][127] || qt[4][127]);
+    }
 
     if (fv->optimize_rct) {
         err = init_rct_search_shader(avctx, sl);
@@ -1389,7 +1444,9 @@ static av_cold int vulkan_encode_ffv1_init(AVCodecContext *avctx)
                                         &fv->enc, 0, 1, 0,
                                         &fv->consts_buf,
                                         256*sizeof(uint32_t) + 512*sizeof(uint8_t),
-                                        VK_WHOLE_SIZE,
+                                        MAX_QUANT_TABLES*MAX_CONTEXT_INPUTS*
+                                        MAX_QUANT_TABLE_SIZE*sizeof(int32_t) +
+                                        sizeof(FFv1QuantBallot),
                                         VK_FORMAT_UNDEFINED));
     RET(ff_vk_shader_update_desc_buffer(&fv->s, &fv->exec_pool.contexts[0],
                                         &fv->enc, 0, 2, 0,
@@ -1418,6 +1475,14 @@ static av_cold int vulkan_encode_ffv1_init(AVCodecContext *avctx)
                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT));
     RET(ff_vk_map_buffer(&fv->s, &fv->results_buf, NULL, 0));
+
+    RET(ff_vk_create_buf(&fv->s, &fv->order_buf,
+                         fv->async_depth*f->max_slice_count*sizeof(uint32_t),
+                         NULL, NULL,
+                         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
+                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT));
+    RET(ff_vk_map_buffer(&fv->s, &fv->order_buf, NULL, 0));
 
 fail:
     return err;
@@ -1456,6 +1521,7 @@ static av_cold int vulkan_encode_ffv1_close(AVCodecContext *avctx)
     av_refstruct_pool_uninit(&fv->remap_data_pool);
 
     ff_vk_free_buf(&fv->s, &fv->results_buf);
+    ff_vk_free_buf(&fv->s, &fv->order_buf);
 
     ff_vk_free_buf(&fv->s, &fv->consts_buf);
 
@@ -1471,7 +1537,7 @@ static const AVOption vulkan_encode_ffv1_options[] = {
     { "slicecrc", "Protect slices with CRCs", OFFSET(ctx.ec), AV_OPT_TYPE_INT,
             { .i64 = -1 }, -1, 2, VE },
     { "context", "Context model", OFFSET(ctx.context_model), AV_OPT_TYPE_INT,
-            { .i64 = 0 }, 0, 1, VE },
+            { .i64 = 2 }, 0, 2, VE },
     { "coder", "Coder type", OFFSET(ctx.ac), AV_OPT_TYPE_INT,
             { .i64 = AC_RANGE_CUSTOM_TAB }, -2, 2, VE, .unit = "coder" },
         { "rice", "Golomb rice", 0, AV_OPT_TYPE_CONST,

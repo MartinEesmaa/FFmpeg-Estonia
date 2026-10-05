@@ -22,6 +22,7 @@
 #include "libavutil/avassert.h"
 #include "libavutil/channel_layout.h"
 #include "libavutil/common.h"
+#include "libavutil/mem_internal.h"
 #include "libavutil/opt.h"
 
 #include "libswresample/swresample.h"
@@ -222,9 +223,9 @@ int main(int argc, char **argv){
     int in_sample_rate, out_sample_rate, ch ,i, flush_count;
     AVChannelLayout in_ch_layout = { 0 }, out_ch_layout = { 0 };
     enum AVSampleFormat in_sample_fmt, out_sample_fmt;
-    uint8_t array_in[SAMPLES*8*8];
-    uint8_t array_mid[SAMPLES*8*8*3];
-    uint8_t array_out[SAMPLES*8*8+100];
+    LOCAL_ALIGNED(32, uint8_t, array_in,  [SAMPLES*8*8]);
+    LOCAL_ALIGNED(32, uint8_t, array_mid, [SAMPLES*8*8*3]);
+    LOCAL_ALIGNED(32, uint8_t, array_out, [SAMPLES*8*8+100]);
     uint8_t *ain[SWR_CH_MAX];
     uint8_t *aout[SWR_CH_MAX];
     uint8_t *amid[SWR_CH_MAX];
@@ -237,6 +238,7 @@ int main(int argc, char **argv){
     int max_tests = FF_ARRAY_ELEMS(remaining_tests);
     int test;
     int specific_test= -1;
+    int ret = 0;
 
     struct SwrContext * forw_ctx= NULL;
     struct SwrContext *backw_ctx= NULL;
@@ -301,19 +303,27 @@ int main(int argc, char **argv){
                                            &in_ch_layout,   in_sample_fmt,  in_sample_rate,
                                            0, 0) < 0) {
             fprintf(stderr, "Failed to init forw_cts\n");
-            return 1;
+            ret = 1;
+            goto end;
         }
         if (swr_alloc_set_opts2(&backw_ctx, &in_ch_layout,   in_sample_fmt,  in_sample_rate,
                                             &out_ch_layout, out_sample_fmt, out_sample_rate,
                                             0, 0) < 0) {
             fprintf(stderr, "Failed to init backw_ctx\n");
-            return 1;
+            ret = 1;
+            goto end;
         }
 
-        if(swr_init( forw_ctx) < 0)
+        if (swr_init(forw_ctx) < 0) {
             fprintf(stderr, "swr_init(->) failed\n");
-        if(swr_init(backw_ctx) < 0)
+            ret = 1;
+            goto end;
+        }
+        if (swr_init(backw_ctx) < 0) {
             fprintf(stderr, "swr_init(<-) failed\n");
+            ret = 1;
+            goto end;
+        }
                 //FIXME test planar
         setup_array(ain , array_in ,  in_sample_fmt,   SAMPLES);
         setup_array(amid, array_mid, out_sample_fmt, 3*SAMPLES);
@@ -400,5 +410,10 @@ int main(int argc, char **argv){
         fprintf(stderr, "\n");
     }
 
-    return 0;
+end:
+    swr_free(&forw_ctx);
+    swr_free(&backw_ctx);
+    av_channel_layout_uninit(&in_ch_layout);
+    av_channel_layout_uninit(&out_ch_layout);
+    return ret;
 }

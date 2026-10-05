@@ -14727,6 +14727,10 @@ A '|'-separated list of color range names, such as
 A '|'-separated list of color range names, such as
 "alpha_modes=straight|premultiplied".
 
+@item chroma_locations
+A '|'-separated list of chroma sample location names, such as
+"chroma_locations=left|topleft".
+
 @end table
 
 @subsection Examples
@@ -14813,6 +14817,12 @@ Use same timestamp rounding method as used for other frames.
 Pass through last frame if input duration has not been reached yet.
 @end table
 The default is @code{round}.
+
+If timestamp rounding would otherwise discard every frame, one frame is
+retained when its rounded timestamp equals both the first output timestamp
+and the rounded end of input. This exception extends the output beyond the
+rounded end of input by one output frame period. Frames whose entire interval
+is trimmed by @option{start_time} remain discarded.
 
 @end table
 
@@ -15229,6 +15239,80 @@ sort -n MAP_FILE
 # Use INPUT, OUTPUT and the MAP_FILE from above to compare the corresponding frames in INPUT and OUTPUT via SSIM
 ffmpeg -i INPUT -i OUTPUT -filter_complex '[0:v]fsync=file=MAP_FILE[ref];[1:v][ref]ssim' -f null -
 @end example
+
+@section gainmap
+
+Compute an HDR gain map from two renditions of the same image, as defined by
+ISO 21496-1.
+
+The first input is the base rendition (typically SDR), and the second input
+is the alternate rendition (typically HDR). Both must have the same
+dimensions. Outputs a gain map, as either @samp{gbrpf32} or @samp{grayf32}
+depending on the chosen @option{mode}.
+
+@table @option
+@item mode
+Controls what quantity the gain map is computed against.
+
+The accepted values are:
+@table @samp
+@item rgb
+One gain map channel per component.
+
+@item luma
+A single gain map channel, computed from the luma.
+
+@item maxrgb
+A single gain map channel, computed from @samp{max(R, G, B)}.
+@end table
+
+Default is @samp{rgb}.
+
+@item colorspace
+Chooses which colorspace to compute the gain map in.
+
+The accepted values are:
+@table @samp
+@item base
+The base rendition's colorspace.
+
+@item alternate
+The alternate rendition's colorspace.
+@end table
+
+Default is @samp{base}.
+
+@item min
+@item max
+Bounds on the encoded gain (log2). If unspecified, these will be
+measured from the frame.
+
+@item gamma
+Encoding gamma of the resulting gain map. If unspecified, this will be
+optimized for the frame in question. Setting this to @code{1.0} will produce
+a linear gain map, which may be more efficient in some applications.
+
+@item base_offset
+@item alt_offset
+Offset to prevent numerical instability near zero. Both default to @code{1/64}.
+
+@item base_nits
+@item alt_nits
+Override the reference luminance of the input, in nits. If unspecified, uses
+the values from the input metadata.
+@end table
+
+The @code{gainmap} filter also supports the @ref{framesync} options.
+
+@subsection Examples
+
+@itemize
+@item
+Compute a gain map between an SDR and an HDR version of the same image:
+@example
+ffmpeg -i $sdr -i $hdr -filter_complex "[0:v][1:v]gainmap" $out
+@end example
+@end itemize
 
 @section gblur
 
@@ -17188,9 +17272,12 @@ fail negotiation otherwise. Disabled by default.
 @item color_trc
 @item range
 @item chroma_location
-Configure the colorspace that output frames will be delivered in. The default
-value of @code{auto} outputs frames in the same format as the input frames,
-leading to no change. For any other value, conversion will be performed.
+Configure the colorspace that output frames will be delivered in. For any value
+other than the default @code{auto}, conversion will be performed. With
+@code{auto}, @option{color_primaries} and @option{color_trc} keep the values of
+the input frames, while @option{colorspace}, @option{range} and
+@option{chroma_location} use the values negotiated with the filtergraph, which
+are those of the input unless a following filter requires others.
 
 See the @ref{setparams} filter for a list of possible values.
 
@@ -17656,7 +17743,10 @@ offering the maximum possible speed.
 @end table
 
 @subsection Commands
-This filter supports almost all of the above options as @ref{commands}.
+This filter supports almost all of the above options as @ref{commands}. The
+options negotiated with the filtergraph, @option{format}, @option{colorspace},
+@option{range}, @option{chroma_location} and @option{alpha_mode}, are fixed
+once the filtergraph is configured and can not be changed with commands.
 
 @subsection Examples
 @itemize
@@ -21782,8 +21872,12 @@ Set "MPEG" range (16-235 in case of 8-bit luma).
 
 @item in_chroma_loc
 @item out_chroma_loc
-Set in/output chroma sample location. If not specified, center-sited chroma
-is used by default. Possible values:
+Set in/output chroma sample location. If @option{in_chroma_loc} is not
+specified, the chroma location tagged on the input frame is used, and untagged
+input is assumed to be sited like the output, so it is tagged but not converted.
+If @option{out_chroma_loc} is not specified, the output is converted to the
+chroma location negotiated with the rest of the filtergraph, or keeps the input
+location if none was negotiated. Possible values:
 
 @table @samp
 @item auto, unknown
@@ -24979,6 +25073,7 @@ from the video stream (if available).
 Use specified codec instead of snow.
 @end table
 
+@anchor{v360}
 @section v360
 
 Convert 360 videos between various formats.
@@ -29886,6 +29981,113 @@ Preserve landscape geometry (when @var{width} >= @var{height}).
 
 @end table
 
+@anchor{v360_vulkan}
+@section v360_vulkan
+
+Convert 360 videos between various formats.
+Supported formats (projections) are subset of @ref{v360} filter,
+that are most popular 360-degree video formats.
+
+The filter accepts subset of @ref{v360} options:
+
+@table @option
+
+@item input
+@item output
+Set format of the input/output video.
+
+@table @samp
+
+@item e
+@item equirect
+Equirectangular projection.
+
+@item eac
+Equi-Angular Cubemap. (Output only)
+
+@b{FIXME}: current output doesn't contain padding.
+
+@item flat
+Regular video.
+
+@item dfisheye
+Dual fisheye.
+
+@item sg
+Stereographic format.
+
+@item fisheye
+Fisheye projection.
+
+@item gopromax
+GoPro Max .360 format. (Input only)
+
+A .360 video file contains two video streams (front and rear);
+with this input projection the filter takes two inputs and combines
+them into a single stream. See the @option{overlap} option.
+@end table
+
+@item w
+@item h
+Set the output video resolution.
+See @ref{v360} options.
+
+@item yaw
+@item pitch
+@item roll
+@item rorder
+Set rotation for the output video.
+See @ref{v360} options.
+
+@item h_fov
+@item v_fov
+Set output horizontal/vertical field of view.
+See @ref{v360} options.
+
+@item ih_fov
+@item iv_fov
+Set input horizontal/vertical field of view.
+See @ref{v360} options.
+
+@item overlap
+Set number of overlapped pixels on input .360 video.
+Only used with @code{input=gopromax}.
+
+The GoPro Max .360 video contains overlapped area
+(See @url{https://gopro.com/news/max-tech-specs-stitching-resolution}).
+The filter blends overlapped images in these two areas.
+
+The number of pixels of overlapped areas depends on the video resolution.
+In most cases, the value is automatically calculated based on input video size,
+but it may be changed on GoPro Max2 or future models.
+The option is to adjust for unknown video resolutions.
+
+@end table
+
+@subsection Examples
+Special notes exist to use with @code{input=gopromax}.
+
+The GoPro Max .360 video file contains two video streams,
+and the stream number must be specified.
+The stream number (e.g., @code{[0:5]}) depends on the model and shooting mode.
+Please check actual stream number with @code{ffprobe} command.
+
+@itemize
+@item
+Convert GoPro Max (8bit color depth) .360 to Equirectangular projection.
+GoPro Max uses obsolete yuvj420p pixel format, thus convert the format to yuv420p before this filter.
+@example
+ffmpeg -init_hw_device vulkan -i INPUT.360 -filter_complex "[0:0]format=yuv420p,hwupload[vf],[0:5]format=yuv420p,hwupload[vr], [vf][vr]v360_vulkan=input=gopromax:output=e, hwdownload,format=yuv420p" OUTPUT.mkv
+@end example
+
+@item
+Convert GoPro Max2 (10bit color depth) .360 to Dual fisheye projection.
+GoPro Max2 uses yuv420p10le pixel format.
+@example
+ffmpeg -init_hw_device vulkan -i INPUT.360 -filter_complex "[0:0]hwupload[vf],[0:4]hwupload[vr], [vf][vr]v360_vulkan=input=gopromax:output=dfisheye, hwdownload,format=yuv420p10le" OUTPUT.mkv
+@end example
+@end itemize
+
 @c man end VULKAN VIDEO FILTERS
 
 @chapter QSV Video Filters
@@ -30028,6 +30230,13 @@ name.
 A string representing the alpha mode of the buffered video frames.
 It may be a number corresponding to an alpha mode, or an alpha mode
 name.
+
+@item chroma_location
+A string representing the chroma sample location of the buffered video
+frames. It may be a number corresponding to a chroma sample location, or a
+chroma sample location name. When it is not set, the filtergraph chooses the
+chroma sample location of the output. Frames without a chroma sample location
+are tagged with the one negotiated for the output.
 
 @item pixel_aspect, sar
 The sample (pixel) aspect ratio of the input video.
@@ -30502,7 +30711,7 @@ value is "25".
 @item c0, c1, c2, c3, c4, c5, c6, c7
 Set 8 colors. Default values for colors is to pick random one.
 
-@item x0, y0, y0, y1
+@item x0, y0, x1, y1
 Set gradient line source and destination points. If negative or out of range, random ones
 are picked.
 
@@ -34366,6 +34575,7 @@ Possible values are:
 @item DYNAMIC_HDR_VIVID
 @item AMBIENT_VIEWING_ENVIRONMENT
 @item VIDEO_HINT
+@item GAIN_MAP_PARAMS
 @end table
 
 @end table

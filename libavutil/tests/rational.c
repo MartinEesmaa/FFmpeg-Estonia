@@ -23,10 +23,28 @@
 #include "libavutil/integer.h"
 #include "libavutil/intfloat.h"
 
+static int check_q2intfloat(AVRational q)
+{
+    float f  = av_int2float(av_q2intfloat(q));
+    float f2 = av_q2d(q);
+    int fail;
+
+    if (isnan(f) || isnan(f2))
+        fail = !isnan(f) || !isnan(f2);
+    else if (isinf(f) || isinf(f2))
+        fail = f != f2;
+    else
+        fail = fabs(f - f2) > fabs(f)/5000000;
+    if (fail)
+        av_log(NULL, AV_LOG_ERROR, "%d/%d %f %f\n", q.num, q.den, f, f2);
+    return fail;
+}
+
 int main(void)
 {
     AVRational a,b,r;
     int i,j,k;
+    int ret = 0;
     static const int64_t numlist[] = {
         INT64_MIN, INT64_MIN+1, INT64_MAX, INT32_MIN, INT32_MAX, 1,0,-1,
         123456789, INT32_MAX-1, INT32_MAX+1LL, UINT32_MAX-1, UINT32_MAX, UINT32_MAX+1LL
@@ -42,12 +60,16 @@ int main(void)
                     if (d > 0)       d = 1;
                     else if (d < 0)  d = -1;
                     else if (d != d) d = INT_MIN;
-                    if (c != d)
+                    if (c != d) {
                         av_log(NULL, AV_LOG_ERROR, "%d/%d %d/%d, %d %f\n", a.num,
                                a.den, b.num, b.den, c,d);
+                        ret = 1;
+                    }
                     r = av_sub_q(av_add_q(b,a), b);
-                    if(b.den && (r.num*a.den != a.num*r.den || !r.num != !a.num || !r.den != !a.den))
+                    if(b.den && (r.num*a.den != a.num*r.den || !r.num != !a.num || !r.den != !a.den)) {
                         av_log(NULL, AV_LOG_ERROR, "%d/%d ", r.num, r.den);
+                        ret = 1;
+                    }
                 }
             }
         }
@@ -76,6 +98,7 @@ int main(void)
             if (r.num != c.num || r.den != c.den) {
                 av_log(NULL, AV_LOG_ERROR, "%d/%d * %d/%d = %d/%d, expected %d/%d\n",
                        a.num, a.den, b.num, b.den, r.num, r.den, c.num, c.den);
+                ret = 1;
             }
         }
     }
@@ -102,6 +125,7 @@ int main(void)
             if (r.num != c.num || r.den != c.den) {
                 av_log(NULL, AV_LOG_ERROR, "%d/%d + %d/%d = %d/%d, expected %d/%d\n",
                        a.num, a.den, b.num, b.den, r.num, r.den, c.num, c.den);
+                ret = 1;
             }
         }
     }
@@ -137,6 +161,7 @@ int main(void)
                     continue;
 
                 av_log(NULL, AV_LOG_ERROR, "%"PRId64" * %"PRId64" / %"PRId64" = %"PRId64" or %"PRId64"\n", a,b,c, res, av_i2int(ai));
+                ret = 1;
             }
         }
     }
@@ -171,18 +196,22 @@ int main(void)
         }
     }
 
-    for (a.den = 1; a.den < 0x100000000U/3; a.den*=3) {
+    for (int64_t den = 1; den <= INT_MAX; den *= 3) {
+        a.den = den;
         for (a.num = -1; a.num < (1<<27); a.num += 1 + a.num/100) {
-            float f  = av_int2float(av_q2intfloat(a));
-            float f2 = av_q2d(a);
-            if (fabs(f - f2) > fabs(f)/5000000) {
-                av_log(NULL, AV_LOG_ERROR, "%d/%d %f %f\n", a.num,
-                       a.den, f, f2);
+            if (check_q2intfloat(a))
                 return 1;
-            }
-
         }
     }
 
-    return 0;
+    static const AVRational q2intfloat_list[] = {
+        {INT_MIN, 1}, {1, INT_MIN}, {INT_MIN, INT_MIN}, {INT_MIN, -1}, {-1, INT_MIN},
+        {INT_MAX, INT_MIN}, {INT_MIN, INT_MAX}, {-3, -7}, {3, -7},
+        {1, 0}, {-1, 0}, {INT_MIN, 0}, {0, 0}, {0, 1}, {0, INT_MIN},
+    };
+
+    for (i = 0; i < FF_ARRAY_ELEMS(q2intfloat_list); i++)
+        ret |= check_q2intfloat(q2intfloat_list[i]);
+
+    return ret;
 }

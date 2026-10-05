@@ -56,6 +56,8 @@
 #define MPEG_TIME_BASE 90000
 #define MPEG_TIME_BASE_Q (AVRational){1, MPEG_TIME_BASE}
 
+#define PACKED_AUDIO_FORMATS "aac,ac3,eac3,mp3"
+
 /*
  * An apple http stream consists of a playlist with media segment files,
  * played sequentially. There may be several playlists with the same
@@ -102,7 +104,6 @@ enum PlaylistType {
 struct playlist {
     char url[MAX_URL_SIZE];
     FFIOContext pb;
-    uint8_t* read_buffer;
     AVIOContext *input;
     int input_read_done;
     int input_reuse;
@@ -658,9 +659,10 @@ static int ensure_playlist(HLSContext *c, struct playlist **pls, const char *url
 {
     if (*pls)
         return 0;
-    if (!new_variant(c, NULL, url, NULL))
+    struct variant *var = new_variant(c, NULL, url, NULL);
+    if (!var)
         return AVERROR(ENOMEM);
-    *pls = c->playlists[c->n_playlists - 1];
+    *pls = var->playlists[0];
     return 0;
 }
 
@@ -1157,11 +1159,11 @@ static int parse_playlist(HLSContext *c, const char *url,
             av_log(c->ctx, AV_LOG_WARNING, "Media sequence changed unexpectedly: %"PRId64" -> %"PRId64"\n",
                    prev_start_seq_no, pls->start_seq_no);
         }
-        free_segment_dynarray(prev_segments, prev_n_segments);
-        av_freep(&prev_segments);
     }
 
 fail:
+    free_segment_dynarray(prev_segments, prev_n_segments);
+    av_freep(&prev_segments);
     if (pls)
         pls->last_load_time = load_start;
     av_free(new_url);
@@ -1311,9 +1313,10 @@ static void handle_id3(AVIOContext *pb, struct playlist *pls)
         pls->id3_found = 1;
 
         /* get picture attachment and set text metadata */
-        if (pls->ctx->nb_streams)
-            ff_id3v2_parse_apic(pls->ctx, extra_meta);
-        else
+        if (pls->ctx->nb_streams) {
+            if (av_match_name(pls->ctx->iformat->name, PACKED_AUDIO_FORMATS))
+                ff_id3v2_parse_apic(pls->ctx, extra_meta);
+        } else
             /* demuxer not yet opened, defer picture attachment */
             pls->id3_deferred_extra = extra_meta;
 
@@ -1329,7 +1332,7 @@ static void handle_id3(AVIOContext *pb, struct playlist *pls)
         av_dict_free(&metadata);
     }
 
-    if (!pls->id3_deferred_extra)
+    if (pls->id3_deferred_extra != extra_meta)
         ff_id3v2_free_extra_meta(&extra_meta);
 }
 
@@ -1848,7 +1851,7 @@ restart:
     if (v->init_sec_buf_read_offset < v->init_sec_data_len) {
         /* Push init section out first before first actual segment */
         int copy_size = FFMIN(v->init_sec_data_len - v->init_sec_buf_read_offset, buf_size);
-        memcpy(buf, v->init_sec_buf, copy_size);
+        memcpy(buf, v->init_sec_buf + v->init_sec_buf_read_offset, copy_size);
         v->init_sec_buf_read_offset += copy_size;
         return copy_size;
     }
@@ -1929,27 +1932,32 @@ static int init_subtitle_context(struct playlist *pls)
     HLSContext *c = pls->parent->priv_data;
     const AVInputFormat *in_fmt;
     AVDictionary *opts = NULL;
+    uint8_t *buf;
     int ret;
 
     if (!(pls->ctx = avformat_alloc_context()))
         return AVERROR(ENOMEM);
 
-    pls->read_buffer = av_malloc(INITIAL_BUFFER_SIZE);
-    if (!pls->read_buffer) {
+    buf = av_malloc(INITIAL_BUFFER_SIZE);
+    if (!buf) {
         avformat_free_context(pls->ctx);
         pls->ctx = NULL;
         return AVERROR(ENOMEM);
     }
 
-    ffio_init_context(&pls->pb, pls->read_buffer, INITIAL_BUFFER_SIZE, 0, pls,
+    av_freep(&pls->pb.pub.buffer);
+    ffio_init_context(&pls->pb, buf, INITIAL_BUFFER_SIZE, 0, pls,
                       read_data_subtitle_segment, NULL, NULL);
     pls->pb.pub.seekable = 0;
     pls->ctx->pb       = &pls->pb.pub;
     pls->ctx->io_open  = nested_io_open;
 
     ret = ff_copy_whiteblacklists(pls->ctx, pls->parent);
-    if (ret < 0)
+    if (ret < 0) {
+        avformat_free_context(pls->ctx);
+        pls->ctx = NULL;
         return ret;
+    }
 
     in_fmt = av_find_input_format("webvtt");
     av_dict_copy(&opts, c->seg_format_opts, 0);
@@ -2412,6 +2420,8 @@ static int hls_read_header(AVFormatContext *s)
         char *url;
         AVDictionary *options = NULL;
         struct segment *seg = NULL;
+        uint8_t *buf;
+        int buf_size;
 
         if (!(pls->ctx = avformat_alloc_context()))
             return AVERROR(ENOMEM);
@@ -2435,19 +2445,21 @@ static int hls_read_header(AVFormatContext *s)
             pls->cur_seq_no = highest_cur_seq_no;
         }
 
-        pls->read_buffer = av_malloc(INITIAL_BUFFER_SIZE);
-        if (!pls->read_buffer){
+        if (pls->is_subtitle) {
+            buf_size = strlen("WEBVTT\n");
+            buf = av_memdup("WEBVTT\n", buf_size);
+        } else {
+            buf_size = INITIAL_BUFFER_SIZE;
+            buf = av_malloc(buf_size);
+        }
+        if (!buf) {
             avformat_free_context(pls->ctx);
             pls->ctx = NULL;
             return AVERROR(ENOMEM);
         }
 
-        if (pls->is_subtitle)
-            ffio_init_context(&pls->pb, (unsigned char*)av_strdup("WEBVTT\n"), (int)strlen("WEBVTT\n"), 0, pls,
-                                       NULL, NULL, NULL);
-        else
-            ffio_init_context(&pls->pb, pls->read_buffer, INITIAL_BUFFER_SIZE, 0, pls,
-                                        read_data_continuous, NULL, NULL);
+        ffio_init_context(&pls->pb, buf, buf_size, 0, pls,
+                          pls->is_subtitle ? NULL : read_data_continuous, NULL, NULL);
 
         /*
          * If encryption scheme is SAMPLE-AES, try to read  ID3 tags of
@@ -2553,7 +2565,8 @@ static int hls_read_header(AVFormatContext *s)
             return ret;
 
         if (pls->id3_deferred_extra && pls->ctx->nb_streams == 1) {
-            ff_id3v2_parse_apic(pls->ctx, pls->id3_deferred_extra);
+            if (av_match_name(pls->ctx->iformat->name, PACKED_AUDIO_FORMATS))
+                ff_id3v2_parse_apic(pls->ctx, pls->id3_deferred_extra);
             avformat_queue_attached_pictures(pls->ctx);
             ff_id3v2_parse_priv(pls->ctx, pls->id3_deferred_extra);
             ff_id3v2_free_extra_meta(&pls->id3_deferred_extra);

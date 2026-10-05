@@ -448,6 +448,7 @@ static void log_callback(void *ptr, int level, const char *fmt, va_list vl)
 } while (0)
 
 #define print_int(k, v)         avtext_print_integer(tfc, k, v, 0)
+#define print_int_opt(k, v)     avtext_print_integer(tfc, k, v, AV_TEXTFORMAT_PRINT_STRING_OPTIONAL)
 #define print_q(k, v, s)        avtext_print_rational(tfc, k, v, s)
 #define print_str(k, v)         avtext_print_string(tfc, k, v, 0)
 #define print_str_opt(k, v)     avtext_print_string(tfc, k, v, AV_TEXTFORMAT_PRINT_STRING_OPTIONAL)
@@ -1923,6 +1924,10 @@ static int show_stream(AVTextFormatContext *tfc, AVFormatContext *fmt_ctx, int s
         } else
             print_str_opt("profile", "unknown");
     }
+    if (par->level != AV_LEVEL_UNKNOWN)
+        print_int("level", par->level);
+    else
+        print_int_opt("level", par->level);
 
     s = av_get_media_type_string(par->codec_type);
     if (s) print_str    ("codec_type", s);
@@ -1963,7 +1968,6 @@ static int show_stream(AVTextFormatContext *tfc, AVFormatContext *fmt_ctx, int s
             print_str_opt("display_aspect_ratio", "N/A");
         }
         print_pixel_format(tfc, par->format);
-        print_int("level",   par->level);
 
         print_color_range(tfc, par->color_range);
         print_color_space(tfc, par->color_space);
@@ -3460,6 +3464,11 @@ int main(int argc, char **argv)
     f = avtext_get_formatter_by_name(f_name);
     if (!f) {
         av_log(NULL, AV_LOG_ERROR, "Unknown output format with name '%s'\n", f_name);
+        ret = AVERROR(EINVAL);
+        goto end;
+    }
+    if (f->flags & AV_TEXTFORMAT_FLAG_IS_DIAGRAM_FORMATTER) {
+        av_log(NULL, AV_LOG_ERROR, "Output format '%s' can only draw filter graphs\n", f_name);
         ret = AVERROR(EINVAL);
         goto end;
     }

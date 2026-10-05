@@ -875,9 +875,14 @@ static void linear_pass(SwsAArch64Context *s, const SwsAArch64OpImplParams *p,
             } else if (first && !is_offset) {
                 if (p->par.lin.one & SWS_MASK(i, src_j)) {
                     i_mov16b(r, dx[i], vsrc);           CMTF("v%c[%u]  = vsrc%c[%u];", cvh, i, cvh, src_j);
-                } else {
+                } else if (p->type == SWS_PIXEL_F32) {
                     i_fmul  (r, dx[i], vsrc, vcoeff);   CMTF("v%c[%u]  = vsrc%c[%u] * coeff[%u][%u];", cvh, i, cvh, src_j, i, src_j);
+                } else {
+                    i_mul   (r, dx[i], vsrc, vcoeff);   CMTF("v%c[%u]  = vsrc%c[%u] * coeff[%u][%u];", cvh, i, cvh, src_j, i, src_j);
                 }
+            } else if (p->type != SWS_PIXEL_F32) {
+                /* Integer multiply-accumulate is always exact. */
+                i_mla (r, dx[i], vsrc, vcoeff);         CMTF("v%c[%u] += vsrc%c[%u] * coeff[%u][%u];", cvh, i, cvh, src_j, i, src_j);
             } else if (p->uop == SWS_UOP_LINEAR_FMA) {
                 /**
                  * Most modern aarch64 cores have a fastpath for sequences
@@ -938,8 +943,23 @@ static void asmgen_op_dither(SwsAArch64Context *s, const SwsAArch64OpImplParams 
     RasmOp y64 = a64op_x(s->y);
 
     /**
-     * For a description of the matrix buffer layout, read the comments
-     * in aarch64_setup_dither() in aarch64/ops.c.
+     * The dither matrix is (1 << size_log2)² pixels large. It is
+     * periodic, so the x and y offsets should be masked to fit inside
+     * (1 << size_log2). The matrix buffer is prepared by
+     * translate_dither_op() in libswscale/uops.c.
+     * The width of the matrix is assumed to be at least 8, which matches
+     * the maximum block_size for aarch64 asmgen when f32 operations
+     * (i.e., dithering) are used. This guarantees that the x offset is
+     * aligned and that reading block_size elements does not extend past
+     * the end of the row. The x offset doesn't change between components,
+     * so it is only required to be masked once.
+     * The y offset, on the other hand, may change per component, and
+     * would therefore need to be masked for every y_offset value. To
+     * avoid this, the matrix buffer is over-allocated by the largest
+     * y_offset value, with the extra rows repeating the first rows of
+     * the matrix. This way, we only need to mask the y offset once, and
+     * can safely increment the dither matrix pointer by fixed offsets
+     * for every y_offset change.
      */
 
     /**

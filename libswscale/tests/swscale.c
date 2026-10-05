@@ -337,17 +337,18 @@ static int scale_hw(AVFrame *dst, const AVFrame *src,
     AVFrame *out_f = NULL;
     int ret;
 
-    if (src->format == dst->format)
-        return AVERROR(ENOTSUP);
-
     sws_hw = sws_alloc_context();
     if (!sws_hw) {
         ret = AVERROR(ENOMEM);
         goto error;
     }
 
-    sws_hw->flags  = mode->flags;
-    sws_hw->dither = mode->dither;
+    sws_hw->flags      = mode->flags;
+    sws_hw->dither     = mode->dither;
+    sws_hw->scaler     = mode->scaler;
+    sws_hw->scaler_sub = mode->scaler_sub;
+    sws_hw->threads    = opts->threads;
+    sws_hw->backends   = opts->backends;
 
     in_ref = av_hwframe_ctx_alloc(hw_device_ctx);
     if (!in_ref) {
@@ -752,7 +753,7 @@ static int run_self_tests(const AVFrame *ref, const struct options *opts)
                         int dst_w = (opts->dst_w >= 0) ? opts->dst_w : dst_w_values[w];
                         int dst_h = (opts->dst_h >= 0) ? opts->dst_h : dst_h_values[h];
 
-                        if (opts->scaler >= 0 && opts->w == dst_w && opts->h == dst_h)
+                        if (opts->scaler > SWS_SCALE_AUTO && opts->w == dst_w && opts->h == dst_h)
                             continue;
 
                         if (ff_sfc64_get(&prng_state) <= UINT64_MAX * opts->prob) {
@@ -970,6 +971,7 @@ static int parse_options(int argc, char **argv, struct options *opts, FILE **fp)
                     "       Use selected swscale API for the main conversion (default: new)\n"
                     "   -hw <device>\n"
                     "       Use Vulkan hardware acceleration on the specified device for the main conversion\n"
+                    "       If 'default', use the default device, and skip all tests if none is available\n"
                     "   -threads <threads>\n"
                     "       Use the specified number of threads\n"
                     "   -cpuflags <cpuflags>\n"
@@ -1075,12 +1077,18 @@ static int parse_options(int argc, char **argv, struct options *opts, FILE **fp)
             }
             opts->api = ret;
         } else if (!strcmp(argv[i], "-hw")) {
+            const int hw_default = !strcmp(argv[i + 1], "default");
             ret = av_hwdevice_ctx_create(&hw_device_ctx,
                                          AV_HWDEVICE_TYPE_VULKAN,
-                                         argv[i + 1], NULL, 0);
+                                         hw_default ? NULL : argv[i + 1], NULL, 0);
             if (ret < 0) {
-                fprintf(stderr, "Failed to create Vulkan device '%s'\n",
-                        argv[i + 1]);
+                if (hw_default) {
+                    fprintf(stderr, "No Vulkan device available, skipping.\n");
+                    ret = AVERROR(ENOTSUP);
+                } else {
+                    fprintf(stderr, "Failed to create Vulkan device '%s'\n",
+                            argv[i + 1]);
+                }
                 goto end;
             }
             hw_device_constr = av_hwdevice_get_hwframe_constraints(hw_device_ctx,
@@ -1140,9 +1148,13 @@ int main(int argc, char **argv)
 
     AVFrame *ref = NULL;
     FILE *fp = NULL;
-    int ret = -1;
 
-    if (parse_options(argc, argv, &opts, &fp) < 0)
+    int ret = parse_options(argc, argv, &opts, &fp);
+    if (ret == AVERROR(ENOTSUP)) {
+        ret = 0;
+        goto error;
+    }
+    if (ret < 0)
         goto error;
 
     ff_sfc64_init(&prng_state, 0, 0, 0, 12);
@@ -1151,16 +1163,20 @@ int main(int argc, char **argv)
     sws_ref_src = sws_alloc_context();
     sws_src_dst = sws_alloc_context();
     sws_dst_out = sws_alloc_context();
-    if (!sws_ref_src || !sws_src_dst || !sws_dst_out)
+    if (!sws_ref_src || !sws_src_dst || !sws_dst_out) {
+        ret = AVERROR(ENOMEM);
         goto error;
+    }
     sws_ref_src->flags = SWS_BILINEAR | SWS_BITEXACT | SWS_ACCURATE_RND;
     sws_dst_out->flags = SWS_BILINEAR | SWS_BITEXACT | SWS_ACCURATE_RND;
     sws_ref_src->backends = SWS_BACKEND_ALL;
     sws_dst_out->backends = SWS_BACKEND_ALL;
 
     ref = av_frame_alloc();
-    if (!ref)
+    if (!ref) {
+        ret = AVERROR(ENOMEM);
         goto error;
+    }
     ref->width  = opts.w;
     ref->height = opts.h;
     ref->format = AV_PIX_FMT_YUVA444P;

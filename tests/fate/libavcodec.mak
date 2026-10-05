@@ -95,6 +95,10 @@ fate-rangecoder: libavcodec/tests/rangecoder$(EXESUF)
 fate-rangecoder: CMD = run libavcodec/tests/rangecoder$(EXESUF)
 fate-rangecoder: CMP = null
 
+FATE_LIBAVCODEC-$(CONFIG_SNOW_ENCODER) += fate-snow-dwt
+fate-snow-dwt: libavcodec/tests/snowenc$(EXESUF)
+fate-snow-dwt: CMD = run libavcodec/tests/snowenc$(EXESUF)
+
 FATE_LIBAVCODEC-yes += fate-mathops
 fate-mathops: libavcodec/tests/mathops$(EXESUF)
 fate-mathops: CMD = run libavcodec/tests/mathops$(EXESUF)
@@ -117,6 +121,14 @@ fate-libavcodec-huffman: CMP = null
 FATE_LIBAVCODEC-yes += fate-libavcodec-htmlsubtitles
 fate-libavcodec-htmlsubtitles: libavcodec/tests/htmlsubtitles$(EXESUF)
 fate-libavcodec-htmlsubtitles: CMD = run libavcodec/tests/htmlsubtitles$(EXESUF)
+
+FATE_SAMPLES_ENC_RECON-$(call DEMDEC, H264, H264, H264_PARSER SNOW_ENCODER SNOW_DECODER SWSCALE) += fate-enc-recon-snow-97 fate-enc-recon-snow-53
+fate-enc-recon-snow-97: CMD = run tools/enc_recon_frame_test$(EXESUF) $(TARGET_SAMPLES)/h264-conformance/SVA_NL2_E.264 snow pred=dwt97
+fate-enc-recon-snow-53: CMD = run tools/enc_recon_frame_test$(EXESUF) $(TARGET_SAMPLES)/h264-conformance/SVA_NL2_E.264 snow pred=dwt53
+$(FATE_SAMPLES_ENC_RECON-yes): tools/enc_recon_frame_test$(EXESUF)
+$(FATE_SAMPLES_ENC_RECON-yes): CMP = null
+FATE_EXTERN-yes += $(FATE_SAMPLES_ENC_RECON-yes)
+fate-enc-recon: $(FATE_SAMPLES_ENC_RECON-yes)
 
 FATE-$(CONFIG_AVCODEC) += $(FATE_LIBAVCODEC-yes)
 fate-libavcodec: $(FATE_LIBAVCODEC-yes)

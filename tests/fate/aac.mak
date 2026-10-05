@@ -224,7 +224,7 @@ FATE_AAC_ENCODE += fate-aac-ln-encode-128k
 fate-aac-ln-encode-128k: CMD = enc_dec_pcm mp4 wav s16le $(TARGET_SAMPLES)/audio-reference/luckynight_2ch_44kHz_s16.wav -c:a aac -aac_coder fast -aac_is 0 -aac_pns 0 -aac_ms 0 -aac_tns 0 -b:a 128k -cutoff 22050 -fflags +bitexact -flags +bitexact
 fate-aac-ln-encode-128k: CMP = stddev
 fate-aac-ln-encode-128k: REF = $(SAMPLES)/audio-reference/luckynight_2ch_44kHz_s16.wav
-fate-aac-ln-encode-128k: CMP_TARGET = 622
+fate-aac-ln-encode-128k: CMP_TARGET = 618
 fate-aac-ln-encode-128k: FUZZ = 10
 
 FATE_AAC_ENCODE += fate-aac-pns-encode
@@ -238,21 +238,21 @@ FATE_AAC_ENCODE += fate-aac-tns-encode
 fate-aac-tns-encode: CMD = enc_dec_pcm mp4 wav s16le $(TARGET_SAMPLES)/audio-reference/luckynight_2ch_44kHz_s16.wav -c:a aac -aac_coder fast -aac_tns 1 -aac_is 0 -aac_pns 0 -aac_ms 0 -b:a 128k -cutoff 22050  -fflags +bitexact -flags +bitexact
 fate-aac-tns-encode: CMP = stddev
 fate-aac-tns-encode: REF = $(SAMPLES)/audio-reference/luckynight_2ch_44kHz_s16.wav
-fate-aac-tns-encode: CMP_TARGET = 637
+fate-aac-tns-encode: CMP_TARGET = 619
 fate-aac-tns-encode: FUZZ = 7
 
 FATE_AAC_ENCODE += fate-aac-is-encode
 fate-aac-is-encode: CMD = enc_dec_pcm mp4 wav s16le $(TARGET_SAMPLES)/audio-reference/luckynight_2ch_44kHz_s16.wav -c:a aac -aac_coder fast -aac_pns 0 -aac_is 1 -aac_ms 0 -b:a 128k -aac_tns 0 -cutoff 22050 -fflags +bitexact -flags +bitexact
 fate-aac-is-encode: CMP = stddev
 fate-aac-is-encode: REF = $(SAMPLES)/audio-reference/luckynight_2ch_44kHz_s16.wav
-fate-aac-is-encode: CMP_TARGET = 500
+fate-aac-is-encode: CMP_TARGET = 503
 fate-aac-is-encode: FUZZ = 10
 
 FATE_AAC_ENCODE += fate-aac-ms-encode
 fate-aac-ms-encode: CMD = enc_dec_pcm mp4 wav s16le $(TARGET_SAMPLES)/audio-reference/luckynight_2ch_44kHz_s16.wav -c:a aac -aac_coder fast -aac_pns 0 -aac_is 0 -aac_ms 1 -aac_tns 0 -b:a 128k -cutoff 22050 -fflags +bitexact -flags +bitexact
 fate-aac-ms-encode: CMP = stddev
 fate-aac-ms-encode: REF = $(SAMPLES)/audio-reference/luckynight_2ch_44kHz_s16.wav
-fate-aac-ms-encode: CMP_TARGET = 550
+fate-aac-ms-encode: CMP_TARGET = 563
 fate-aac-ms-encode: FUZZ = 15
 
 #Ticket1784
@@ -262,6 +262,22 @@ fate-aac-yoraw-encode: CMP = stddev
 fate-aac-yoraw-encode: REF = $(SAMPLES)/audio-reference/yo.raw-short.wav
 fate-aac-yoraw-encode: CMP_TARGET = 226
 fate-aac-yoraw-encode: FUZZ = 17
+
+# NMR quality-target modes: VBR at the finest quality drives frames against
+# the decoder-buffer limit; ABR runs through the rate servo's boot
+FATE_AAC_ENCODE += fate-aac-nmr-vbr-encode
+fate-aac-nmr-vbr-encode: CMD = enc_dec_pcm mp4 wav s16le $(TARGET_SAMPLES)/audio-reference/luckynight_2ch_44kHz_s16.wav -c:a aac -q:a 8 -fflags +bitexact -flags +bitexact
+fate-aac-nmr-vbr-encode: CMP = stddev
+fate-aac-nmr-vbr-encode: REF = $(SAMPLES)/audio-reference/luckynight_2ch_44kHz_s16.wav
+fate-aac-nmr-vbr-encode: CMP_TARGET = 67
+fate-aac-nmr-vbr-encode: FUZZ = 5
+
+FATE_AAC_ENCODE += fate-aac-nmr-abr-encode
+fate-aac-nmr-abr-encode: CMD = enc_dec_pcm mp4 wav s16le $(TARGET_SAMPLES)/audio-reference/luckynight_2ch_44kHz_s16.wav -c:a aac -aac_rc abr -b:a 96k -fflags +bitexact -flags +bitexact
+fate-aac-nmr-abr-encode: CMP = stddev
+fate-aac-nmr-abr-encode: REF = $(SAMPLES)/audio-reference/luckynight_2ch_44kHz_s16.wav
+fate-aac-nmr-abr-encode: CMP_TARGET = 451
+fate-aac-nmr-abr-encode: FUZZ = 15
 
 tests/data/fate/aac-5_1_2.adts: TAG = GEN
 tests/data/fate/aac-5_1_2.adts: tests/data/asynth-44100-8.wav
@@ -284,6 +300,13 @@ tests/data/fate/aac-7_1_2.adts: ffmpeg$(PROGSSUF)$(EXESUF) | tests/data/fate
 	-ch_layout "7.1.2" -i $(TARGET_PATH)/tests/data/asynth-44100-10.wav \
 	-c:a aac -aac_pce 1 -aframes 5 -f adts -y $(TARGET_PATH)/$@ 2>/dev/null
 
+tests/data/fate/aac-5_1_6.adts: TAG = GEN
+tests/data/fate/aac-5_1_6.adts: tests/data/asynth-44100-12.wav
+tests/data/fate/aac-5_1_6.adts: ffmpeg$(PROGSSUF)$(EXESUF) | tests/data/fate
+	$(M)$(TARGET_EXEC) $(TARGET_PATH)/$< -nostdin \
+	-ch_layout "5.1.6" -i $(TARGET_PATH)/tests/data/asynth-44100-12.wav \
+	-c:a aac -aac_pce 1 -aframes 5 -f adts -y $(TARGET_PATH)/$@ 2>/dev/null
+
 tests/data/fate/aac-7_2_3.adts: TAG = GEN
 tests/data/fate/aac-7_2_3.adts: tests/data/asynth-44100-12.wav
 tests/data/fate/aac-7_2_3.adts: ffmpeg$(PROGSSUF)$(EXESUF) | tests/data/fate
@@ -296,6 +319,13 @@ tests/data/fate/aac-7_1_4.adts: tests/data/asynth-44100-12.wav
 tests/data/fate/aac-7_1_4.adts: ffmpeg$(PROGSSUF)$(EXESUF) | tests/data/fate
 	$(M)$(TARGET_EXEC) $(TARGET_PATH)/$< -nostdin \
 	-ch_layout "7.1.4" -i $(TARGET_PATH)/tests/data/asynth-44100-12.wav \
+	-c:a aac -aac_pce 1 -aframes 5 -f adts -y $(TARGET_PATH)/$@ 2>/dev/null
+
+tests/data/fate/aac-7_1_6.adts: TAG = GEN
+tests/data/fate/aac-7_1_6.adts: tests/data/asynth-44100-14.wav
+tests/data/fate/aac-7_1_6.adts: ffmpeg$(PROGSSUF)$(EXESUF) | tests/data/fate
+	$(M)$(TARGET_EXEC) $(TARGET_PATH)/$< -nostdin \
+	-ch_layout "7.1.6" -i $(TARGET_PATH)/tests/data/asynth-44100-14.wav \
 	-c:a aac -aac_pce 1 -aframes 5 -f adts -y $(TARGET_PATH)/$@ 2>/dev/null
 
 tests/data/fate/aac-9_1_4.adts: TAG = GEN
@@ -320,8 +350,10 @@ endef
 
 $(eval $(call FATE_AAC_LAYOUT_TEST,5_1_2))
 $(eval $(call FATE_AAC_LAYOUT_TEST,5_1_4))
+$(eval $(call FATE_AAC_LAYOUT_TEST,5_1_6))
 $(eval $(call FATE_AAC_LAYOUT_TEST,7_1_2))
 $(eval $(call FATE_AAC_LAYOUT_TEST,7_1_4))
+$(eval $(call FATE_AAC_LAYOUT_TEST,7_1_6))
 $(eval $(call FATE_AAC_LAYOUT_TEST,7_2_3))
 $(eval $(call FATE_AAC_LAYOUT_TEST,9_1_4))
 $(eval $(call FATE_AAC_LAYOUT_TEST,9_1_6))

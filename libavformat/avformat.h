@@ -1089,8 +1089,9 @@ typedef struct AVStreamGroupTileGrid {
  * AVStreamGroupLayeredVideo is meant to define the relation between a base
  * layer video stream and a separate enhancement layer stream that together
  * form a single layered video presentation (for example a video stream and a
- * data stream containing LCEVC enhancement layer NALUs, or Dolby Vision
- * Profile 7 dual-layer encoding).
+ * data stream containing LCEVC enhancement layer NALUs, Dolby Vision
+ * Profile 7 dual-layer encoding, or a base rendition accompanied by an
+ * ISO 21496-1 gain map).
  *
  * The enhancement layer stream is identified by @ref el_index.
  */
@@ -1155,6 +1156,7 @@ enum AVStreamGroupParamsType {
     AV_STREAM_GROUP_PARAMS_LCEVC,
     AV_STREAM_GROUP_PARAMS_TREF,
     AV_STREAM_GROUP_PARAMS_DOLBY_VISION,
+    AV_STREAM_GROUP_PARAMS_GAIN_MAP,
 };
 
 struct AVIAMFAudioElement;
@@ -2708,6 +2710,10 @@ int avformat_init_output(AVFormatContext *s, AVDictionary **options);
  *            set to the index of the corresponding stream in @ref
  *            AVFormatContext.streams "s->streams".
  *            <br>
+ *            The packet data must be followed by AV_INPUT_BUFFER_PADDING_SIZE
+ *            bytes, as for decoder input; packets from libavcodec and from
+ *            demuxers are.
+ *            <br>
  *            The timestamps (@ref AVPacket.pts "pts", @ref AVPacket.dts "dts")
  *            must be set to correct values in the stream's timebase (unless the
  *            output format is flagged with the AVFMT_NOTIMESTAMPS flag, then
@@ -2751,6 +2757,10 @@ int av_write_frame(AVFormatContext *s, AVPacket *pkt);
  *            Packet's @ref AVPacket.stream_index "stream_index" field must be
  *            set to the index of the corresponding stream in @ref
  *            AVFormatContext.streams "s->streams".
+ *            <br>
+ *            The packet data must be followed by AV_INPUT_BUFFER_PADDING_SIZE
+ *            bytes, as for decoder input; packets from libavcodec and from
+ *            demuxers are.
  *            <br>
  *            The timestamps (@ref AVPacket.pts "pts", @ref AVPacket.dts "dts")
  *            must be set to correct values in the stream's timebase (unless the
@@ -2812,7 +2822,7 @@ int av_write_uncoded_frame_query(AVFormatContext *s, int stream_index);
  * May only be called after a successful call to avformat_write_header.
  *
  * @param s media file handle
- * @return 0 if OK, AVERROR_xxx on error
+ * @return >=0 if OK, AVERROR_xxx on error
  */
 int av_write_trailer(AVFormatContext *s);
 

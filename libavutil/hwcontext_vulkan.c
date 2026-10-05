@@ -653,6 +653,7 @@ static int vkfmt_from_pixfmt2(AVHWDeviceContext *dev_ctx, enum AVPixelFormat p,
                 basics_secondary = (feats_secondary & basic_flags) == basic_flags;
                 storage_secondary = !!(feats_secondary & VK_FORMAT_FEATURE_2_STORAGE_IMAGE_BIT);
             } else {
+                feats_secondary = feats_primary;
                 basics_secondary = basics_primary;
                 storage_secondary = storage_primary;
             }
@@ -3228,6 +3229,7 @@ static int vulkan_frames_init(AVHWFramesContext *hwfc)
     VkImageUsageFlags supported_usage;
     FFVulkanFunctions *vk = &p->vkctx.vkfn;
     const struct FFVkFormatEntry *fmt;
+    const AVPixFmtDescriptor *desc;
     int disable_multiplane = p->disable_multiplane ||
                              (hwctx->flags & AV_VK_FRAME_FLAG_DISABLE_MULTIPLANE);
     int is_lone_dpb = ((hwctx->usage & VK_IMAGE_USAGE_VIDEO_ENCODE_DPB_BIT_KHR) ||
@@ -3250,6 +3252,12 @@ static int vulkan_frames_init(AVHWFramesContext *hwfc)
                av_get_pix_fmt_name(hwfc->sw_format));
         return AVERROR(ENOTSUP);
     }
+
+    /* _420 and _422 formats need even dimensions, use one image per plane */
+    desc = av_pix_fmt_desc_get(hwfc->sw_format);
+    if ((hwfc->width  & ((1 << desc->log2_chroma_w) - 1)) ||
+        (hwfc->height & ((1 << desc->log2_chroma_h) - 1)))
+        disable_multiplane = 1;
 
     if (hwctx->format[0] != VK_FORMAT_UNDEFINED) {
         if (hwctx->format[0] != fmt->vkf) {
