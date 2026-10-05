@@ -1626,11 +1626,6 @@ static int mov_write_audio_tag(AVFormatContext *s, AVIOContext *pb, MOVMuxContex
 
     if (track->mode == MODE_MP4)
         track->entry_version = version;
-
-    // To write the mhaC tag data for mp4 in case of AV_CODEC_ID_MPEGH_3D_AUDIO
-    if(track->par->codec_id == AV_CODEC_ID_MPEGH_3D_AUDIO) {
-        mov_write_mhac_tag(pb,track);
-    }
     
     ret = update_size(pb, pos);
     return ret;
