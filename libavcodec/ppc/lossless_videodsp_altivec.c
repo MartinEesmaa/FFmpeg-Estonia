@@ -23,13 +23,12 @@
 #include "config.h"
 
 #include "libavutil/attributes.h"
-#include "libavutil/cpu.h"
-#include "libavutil/ppc/cpu.h"
 #include "libavutil/ppc/util_altivec.h"
 
 #include "libavcodec/lossless_videodsp.h"
 
-#if HAVE_ALTIVEC
+#include "lossless_videodsp_altivec.h"
+
 static void add_bytes_altivec(uint8_t *dst, uint8_t *src, ptrdiff_t w)
 {
     register int i;
@@ -46,14 +45,8 @@ static void add_bytes_altivec(uint8_t *dst, uint8_t *src, ptrdiff_t w)
     for (; i < w; i++)
         dst[i] = src[i];
 }
-#endif /* HAVE_ALTIVEC */
 
-av_cold void ff_llviddsp_init_ppc(LLVidDSPContext *c)
+av_cold void ff_llviddsp_init_altivec(LLVidDSPContext *c)
 {
-#if HAVE_ALTIVEC
-    if (!PPC_ALTIVEC(av_get_cpu_flags()))
-        return;
-
     c->add_bytes = add_bytes_altivec;
-#endif /* HAVE_ALTIVEC */
 }

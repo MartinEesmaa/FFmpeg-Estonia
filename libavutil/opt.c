@@ -505,11 +505,20 @@ static int set_string_number(void *obj, void *target_obj, const AVOption *o, con
             }
         }
         if (type == AV_OPT_TYPE_FLAGS && dst) {
+            unsigned int operand;
+            /* Validate the operand of a '+' or '-' update and let
+             * write_number() convert it: casting a double outside the
+             * int64_t range (or inf/nan) to int64_t is undefined behaviour,
+             * and the cast would also drop a fractional part that
+             * write_number() is meant to reject, so "+1.5" used to be
+             * accepted while "1.5" is refused. */
+            if (cmd && (ret = write_number(obj, o, &operand, d, 1, 1, 0)) < 0)
+                return ret;
             intnum = *(unsigned int*)dst;
             if (cmd == '+')
-                d = intnum | (int64_t)d;
+                d = intnum | operand;
             else if (cmd == '-')
-                d = intnum &~(int64_t)d;
+                d = intnum &~operand;
         }
 
         if ((ret = write_number(obj, o, dst, d, 1, 1, 0)) < 0)
@@ -534,8 +543,10 @@ static int set_string_image_size(void *obj, const AVOption *o, const char *val, 
         return 0;
     }
     ret = av_parse_video_size(&tmp[0], &tmp[1], val);
-    if (ret < 0)
+    if (ret < 0) {
         av_log(logctx, AV_LOG_ERROR, "Unable to parse \"%s\" option value \"%s\" as image size\n", o->name, val);
+        return ret;
+    }
     if (dst)
         memcpy(dst, tmp, sizeof(tmp));
     return ret;
@@ -563,8 +574,10 @@ static int set_string_color(void *obj, const AVOption *o, const char *val, uint8
     } else {
         uint8_t tmp[4];
         ret = av_parse_color(tmp, val, -1, obj);
-        if (ret < 0)
+        if (ret < 0) {
             av_log(logctx, AV_LOG_ERROR, "Unable to parse \"%s\" option value \"%s\" as color\n", o->name, val);
+            return ret;
+        }
         if (dst)
             memcpy(dst, tmp, sizeof(tmp));
         return ret;
@@ -2169,8 +2182,15 @@ static int opt_copy_elem(void *logctx, enum AVOptionType type,
         *ddictp = NULL;
         return av_dict_copy(ddictp, sdict, 0);
     } else if (type == AV_OPT_TYPE_CHLAYOUT) {
-        if (dst != src)
+        const AVChannelLayout *slayout = (const AVChannelLayout *)src;
+        AVChannelLayout *dlayout = (AVChannelLayout *)dst;
+        if (dlayout != slayout) {
+            if (dlayout->order == AV_CHANNEL_ORDER_CUSTOM &&
+                slayout->order == AV_CHANNEL_ORDER_CUSTOM &&
+                dlayout->u.map == slayout->u.map)
+                dlayout->u.map = NULL;
             return av_channel_layout_copy(dst, src);
+        }
     } else if (opt_is_pod(type)) {
         size_t size = opt_type_desc[type].size;
         memcpy(dst, src, size);
@@ -2816,10 +2836,18 @@ static int opt_serialize(void *obj, int opt_flags, int flags, int *cnt,
     while (o = av_opt_next(obj, o)) {
         if (o->type == AV_OPT_TYPE_CONST)
             continue;
-        if ((flags & AV_OPT_SERIALIZE_OPT_FLAGS_EXACT) && o->flags != opt_flags)
-            continue;
-        else if (((o->flags & opt_flags) != opt_flags))
-            continue;
+        if ((flags & AV_OPT_SERIALIZE_OPT_FLAGS_EXCLUDE)) {
+            if ((flags & AV_OPT_SERIALIZE_OPT_FLAGS_EXACT)) {
+                if (o->flags == opt_flags)
+                    continue;
+            } else if ((o->flags & opt_flags) == opt_flags)
+                continue;
+        } else {
+            if ((flags & AV_OPT_SERIALIZE_OPT_FLAGS_EXACT) && o->flags != opt_flags)
+                continue;
+            else if (((o->flags & opt_flags) != opt_flags))
+                continue;
+        }
         if (flags & AV_OPT_SERIALIZE_SKIP_DEFAULTS && av_opt_is_set_to_default(obj, o) > 0)
             continue;
         if ((ret = av_opt_get(obj, o->name, 0, &buf)) < 0) {

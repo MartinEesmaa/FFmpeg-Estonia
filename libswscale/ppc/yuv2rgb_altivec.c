@@ -95,14 +95,10 @@
 #include "libswscale/swscale.h"
 #include "libswscale/swscale_internal.h"
 #include "libavutil/attributes.h"
-#include "libavutil/cpu.h"
-#include "libavutil/error.h"
-#include "libavutil/mem.h"
 #include "libavutil/mem_internal.h"
 #include "libavutil/pixdesc.h"
 #include "yuv2rgb_altivec.h"
 
-#if HAVE_ALTIVEC
 // util_altivec.h includes the system header altivec.h which redefines bool,
 // making it incompatible with stdbool.h. It therefore must not be included
 // before another one of our headers that may use bool.
@@ -119,7 +115,6 @@ typedef struct SwsInternalAltivec {
     vector signed short   CGV;
     vector signed short   OY;
     vector unsigned short CSHIFT;
-    vector signed short  *vYCoeffsBank, *vCCoeffsBank;
 } SwsInternalAltivec;
 // Check that the sizes of the types match.
 // Note that given that SwsInternal is always allocated via av_malloc,
@@ -556,20 +551,14 @@ static int altivec_uyvy_rgb32(SwsInternal *c, const unsigned char *const *in,
     return srcSliceH;
 }
 
-#endif /* HAVE_ALTIVEC */
-
 /* Ok currently the acceleration routine only supports
  * inputs of widths a multiple of 16
  * and heights a multiple 2
  *
  * So we just fall back to the C codes for this.
  */
-av_cold SwsFunc ff_yuv2rgb_init_ppc(SwsInternal *c)
+av_cold SwsFunc ff_yuv2rgb_init_altivec(SwsInternal *c)
 {
-#if HAVE_ALTIVEC
-    if (!(av_get_cpu_flags() & AV_CPU_FLAG_ALTIVEC))
-        return NULL;
-
     /*
      * and this seems not to matter too much I tried a bunch of
      * videos with abnormal widths and MPlayer crashes elsewhere.
@@ -630,27 +619,22 @@ av_cold SwsFunc ff_yuv2rgb_init_ppc(SwsInternal *c)
         }
         break;
     }
-#endif /* HAVE_ALTIVEC */
 
     return NULL;
 }
 
-av_cold void ff_yuv2rgb_init_tables_ppc(SwsInternal *c,
-                                        const int inv_table[4],
-                                        int brightness,
-                                        int contrast,
-                                        int saturation)
+av_cold void ff_yuv2rgb_init_tables_altivec(SwsInternal *c,
+                                            const int inv_table[4],
+                                            int brightness,
+                                            int contrast,
+                                            int saturation)
 {
-#if HAVE_ALTIVEC
     SwsInternalAltivec *const a = sws_internal_altivec(c);
 
     union {
         DECLARE_ALIGNED(16, signed short, tmp)[8];
         vector signed short vec;
     } buf;
-
-    if (!(av_get_cpu_flags() & AV_CPU_FLAG_ALTIVEC))
-        return;
 
     buf.tmp[0] = ((0xffffLL) * contrast >> 8) >> 9;                               // cy
     buf.tmp[1] = -256 * brightness;                                               // oy
@@ -667,10 +651,7 @@ av_cold void ff_yuv2rgb_init_tables_ppc(SwsInternal *c,
     a->CGU    = vec_splat((vector signed short) buf.vec, 4);
     a->CGV    = vec_splat((vector signed short) buf.vec, 5);
     return;
-#endif /* HAVE_ALTIVEC */
 }
-
-#if HAVE_ALTIVEC
 
 static av_always_inline void yuv2packedX_altivec(SwsInternal *c,
                                                  const int16_t *lumFilter,
@@ -685,8 +666,6 @@ static av_always_inline void yuv2packedX_altivec(SwsInternal *c,
                                                  int dstW, int dstY,
                                                  enum AVPixelFormat target)
 {
-    SwsInternalAltivec *const a = sws_internal_altivec(c);
-
     int i, j;
     vector signed short X, X0, X1, Y0, U0, V0, Y1, U1, V1, U, V;
     vector signed short R0, G0, B0, R1, G1, B1;
@@ -700,8 +679,8 @@ static av_always_inline void yuv2packedX_altivec(SwsInternal *c,
 
     vector signed short *YCoeffs, *CCoeffs;
 
-    YCoeffs = a->vYCoeffsBank + dstY * lumFilterSize;
-    CCoeffs = a->vCCoeffsBank + dstY * chrFilterSize;
+    YCoeffs = (vector signed short *)(c->vYCoeffsBank + dstY * lumFilterSize);
+    CCoeffs = (vector signed short *)(c->vCCoeffsBank + dstY * chrFilterSize);
 
     out = (vector unsigned char *) dest;
 
@@ -905,36 +884,3 @@ YUV2PACKEDX_WRAPPER(argb,  AV_PIX_FMT_ARGB);
 YUV2PACKEDX_WRAPPER(rgba,  AV_PIX_FMT_RGBA);
 YUV2PACKEDX_WRAPPER(rgb24, AV_PIX_FMT_RGB24);
 YUV2PACKEDX_WRAPPER(bgr24, AV_PIX_FMT_BGR24);
-
-av_cold int ff_sws_init_altivec_bufs(SwsInternal *c)
-{
-    const SwsContext *const sws = &c->opts;
-    SwsInternalAltivec *const a = sws_internal_altivec(c);
-
-    a->vYCoeffsBank = av_malloc_array(sws->dst_h, c->vLumFilterSize * sizeof(*a->vYCoeffsBank));
-    a->vCCoeffsBank = av_malloc_array(c->chrDstH, c->vChrFilterSize * sizeof(*a->vCCoeffsBank));
-    if (!a->vYCoeffsBank || !a->vCCoeffsBank)
-        return AVERROR(ENOMEM);
-
-    for (int i = 0; i < c->vLumFilterSize * sws->dst_h; ++i) {
-        short *p = (short *)&a->vYCoeffsBank[i];
-        for (int j = 0; j < 8; ++j)
-            p[j] = c->vLumFilter[i];
-    }
-
-    for (int i = 0; i < c->vChrFilterSize * c->chrDstH; ++i) {
-        short *p = (short *)&a->vCCoeffsBank[i];
-        for (int j = 0; j < 8; ++j)
-            p[j] = c->vChrFilter[i];
-    }
-
-    return 0;
-}
-
-av_cold void ff_sws_free_altivec_bufs(SwsInternal *c)
-{
-    SwsInternalAltivec *const a = sws_internal_altivec(c);
-    av_freep(&a->vYCoeffsBank);
-    av_freep(&a->vCCoeffsBank);
-}
-#endif /* HAVE_ALTIVEC */

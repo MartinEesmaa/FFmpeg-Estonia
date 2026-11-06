@@ -61,17 +61,16 @@ typedef struct WebPAnimDemuxContext {
     /*
      * variables for the key frame detection
      */
-    int cur_frame;                  ///< number of frames of the current animation file
+    int64_t first_anmf_offset;
     int vp8x_flags;
 
     int has_iccp;
-    int has_exif;
     int has_anim;
-    int has_xmp;
+
+    int64_t exif_offset;
+    int64_t xmp_offset;
 
     int usebgcolor;
-
-    int64_t first_anmf_offset;
 } WebPAnimDemuxContext;
 
 /**
@@ -253,7 +252,6 @@ static int webp_anim_read_packet(AVFormatContext *s, AVPacket *pkt)
         if (avio_feof(pb)) {
             if (!ctx->ignore_loop &&
                 (ctx->loop_count == 0 || ++ctx->cur_loop < ctx->loop_count)) {
-                ctx->cur_frame = 0;
                 ret = avio_seek(pb, ctx->first_anmf_offset, SEEK_SET);
                 if (ret < 0)
                     return ret;
@@ -272,7 +270,8 @@ static int webp_anim_read_packet(AVFormatContext *s, AVPacket *pkt)
             ret = av_get_packet(pb, pkt, size);
             if (ret < 0)
                 return ret;
-            if (!ctx->cur_frame++)
+            pkt->pos = offset;
+            if (offset == ctx->first_anmf_offset)
                 pkt->flags |= AV_PKT_FLAG_KEY;
             pkt->pts = AV_NOPTS_VALUE;
             pkt->dts = AV_NOPTS_VALUE;
@@ -282,7 +281,9 @@ static int webp_anim_read_packet(AVFormatContext *s, AVPacket *pkt)
             pkt->duration = FFMIN(duration, ctx->max_delay);
             return ret;
         case MKTAG('E', 'X', 'I', 'F'):
-            if (ctx->has_exif) {
+            if (offset == ctx->exif_offset) {
+                avio_skip(pb, size);
+            } else if (ctx->exif_offset) {
                 av_log(s, loglevel, "Extra EXIF chunk found\n");
                 if (explode)
                     return AVERROR_INVALIDDATA;
@@ -306,11 +307,13 @@ static int webp_anim_read_packet(AVFormatContext *s, AVPacket *pkt)
                     av_packet_side_data_remove(st->codecpar->coded_side_data, &st->codecpar->nb_coded_side_data, AV_PKT_DATA_EXIF);
                     return ret;
                 }
-                ctx->has_exif = 1;
+                ctx->exif_offset = offset;
             }
             break;
         case MKTAG('X', 'M', 'P', ' '):
-            if (ctx->has_xmp) {
+            if (offset == ctx->xmp_offset) {
+                avio_skip(pb, size);
+            } else if (ctx->xmp_offset) {
                 av_log(s, loglevel, "Extra XMP chunk found\n");
                 if (explode)
                     return AVERROR_INVALIDDATA;
@@ -333,7 +336,7 @@ static int webp_anim_read_packet(AVFormatContext *s, AVPacket *pkt)
                 }
                 xmp[size] = '\0';
                 av_dict_set(&s->metadata, "xmp", xmp, AV_DICT_DONT_STRDUP_VAL);
-                ctx->has_xmp = 1;
+                ctx->xmp_offset = offset;
             }
             break;
         default:

@@ -156,11 +156,11 @@ static int sunrast_decode_frame(AVCodecContext *avctx, AVFrame *p,
         stride = p->linesize[0];
     }
 
+    uint8_t *end = ptr + (ptrdiff_t)h * stride;
+    x = 0;
     if (type == RT_BYTE_ENCODED) {
         int value, run;
-        uint8_t *end = ptr + (ptrdiff_t)h * stride;
 
-        x = 0;
         while (ptr != end && buf < buf_end) {
             run = 1;
             if (buf_end - buf < 1) {
@@ -193,11 +193,13 @@ static int sunrast_decode_frame(AVCodecContext *avctx, AVFrame *p,
             buf += alen;
         }
     }
+    for (; ptr != end; ptr += stride, x = 0)
+        memset(ptr + x, 0, len - x);
     if (avctx->pix_fmt == AV_PIX_FMT_PAL8 && depth < 8) {
         uint8_t *ptr_free = ptr2;
         ptr = p->data[0];
         for (y=0; y<h; y++) {
-            for (x = 0; x < (w + 7 >> 3) * depth; x++) {
+            for (x = 0; x < len; x++) {
                 if (depth == 1) {
                     ptr[8*x]   = ptr2[x] >> 7;
                     ptr[8*x+1] = ptr2[x] >> 6 & 1;

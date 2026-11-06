@@ -350,8 +350,10 @@ static int activate(AVFilterContext *ctx)
         }
 
         ret = send_frame(inlink, in);
-        if (ret < 0)
+        if (ret < 0) {
+            av_frame_free(&in);
             return ret;
+        }
     }
 
     out = ff_get_video_buffer(outlink, lcevc->w, lcevc->h);
@@ -456,4 +458,5 @@ const FFFilter ff_vf_lcevc = {
     .priv_size     = sizeof(LCEVCContext),
     .init          = init,
     .uninit        = uninit,
+    .flags_internal = FF_FILTER_FLAG_DYNAMIC_FRAME_PARAMS,
 };

@@ -458,6 +458,7 @@ static inline int16_t adpcm_agm_expand_nibble(ADPCMChannelStatus *c, int8_t nibb
     return pred;
 }
 
+#if CONFIG_ADPCM_IMA_ESCAPE_DECODER
 static inline int16_t adpcm_ima_escape_expand_nibble(ADPCMChannelStatus *c, int8_t nibble)
 {
     int step_index;
@@ -480,6 +481,7 @@ static inline int16_t adpcm_ima_escape_expand_nibble(ADPCMChannelStatus *c, int8
 
     return (int16_t)c->predictor;
 }
+#endif
 
 static inline int16_t adpcm_ima_expand_nibble(ADPCMChannelStatus *c, int8_t nibble, int shift)
 {
@@ -617,8 +619,10 @@ int16_t ff_adpcm_ima_qt_expand_nibble(ADPCMChannelStatus *c, int nibble)
     return c->predictor;
 }
 
-static void decode_adpcm_ima_hvqm2(AVCodecContext *avctx, int16_t *outbuf, int samples_to_do,
-                                   int frame_format, GetByteContext *gb)
+#if CONFIG_ADPCM_IMA_HVQM2_DECODER
+static void decode_adpcm_ima_hvqm2(AVCodecContext *avctx, int16_t *outbuf,
+                                   int samples_to_do, int frame_format,
+                                   GetByteContext *gb)
 {
     ADPCMDecodeContext *c = avctx->priv_data;
     int st = avctx->ch_layout.nb_channels == 2;
@@ -653,9 +657,12 @@ static void decode_adpcm_ima_hvqm2(AVCodecContext *avctx, int16_t *outbuf, int s
 
     bytestream2_seek(gb, 0, SEEK_END);
 }
+#endif
 
-static void decode_adpcm_ima_hvqm4(AVCodecContext *avctx, int16_t *outbuf, int samples_to_do,
-                                   int frame_format, GetByteContext *gb)
+#if CONFIG_ADPCM_IMA_HVQM4_DECODER
+static void decode_adpcm_ima_hvqm4(AVCodecContext *avctx, int16_t *outbuf,
+                                   int samples_to_do, int frame_format,
+                                   GetByteContext *gb)
 {
     ADPCMDecodeContext *c = avctx->priv_data;
     int st = avctx->ch_layout.nb_channels == 2;
@@ -696,6 +703,7 @@ static void decode_adpcm_ima_hvqm4(AVCodecContext *avctx, int16_t *outbuf, int s
 
     bytestream2_seek(gb, 0, SEEK_END);
 }
+#endif
 
 static inline int16_t adpcm_ms_expand_nibble(ADPCMChannelStatus *c, int nibble)
 {
@@ -781,7 +789,7 @@ static inline int16_t adpcm_rhetorex_expand_nibble(ADPCMChannelStatus *c, uint16
     c->sample2 = c->sample1;
     c->sample1 = sample;
 
-    c->step_index = FFABS(64512 * c->step_index + 65536 * rhetorex_index[delta]) >> 16;
+    c->step_index = FFABS((int)(64512U * c->step_index + 65536U * rhetorex_index[delta])) >> 16;
 
     return sample;
 }
@@ -829,6 +837,7 @@ static inline int16_t adpcm_mtaf_expand_nibble(ADPCMChannelStatus *c, uint8_t ni
     return c->predictor;
 }
 
+#if CONFIG_ADPCM_CIRCUS_DECODER
 static inline int16_t adpcm_circus_expand_nibble(ADPCMChannelStatus *c, uint8_t nibble)
 {
     int32_t sample = c->predictor;
@@ -849,6 +858,7 @@ static inline int16_t adpcm_circus_expand_nibble(ADPCMChannelStatus *c, uint8_t 
 
     return sample;
 }
+#endif
 
 static inline int16_t adpcm_zork_expand_nibble(ADPCMChannelStatus *c, uint8_t nibble)
 {
@@ -885,6 +895,7 @@ static inline int16_t adpcm_zork_expand_nibble(ADPCMChannelStatus *c, uint8_t ni
     return sample;
 }
 
+#if CONFIG_ADPCM_XA_DECODER
 static int xa_decode(AVCodecContext *avctx, int16_t *out0, int16_t *out1,
                      const uint8_t *in, ADPCMChannelStatus *left,
                      ADPCMChannelStatus *right, int channels, int sample_offset)
@@ -972,7 +983,9 @@ static int xa_decode(AVCodecContext *avctx, int16_t *out0, int16_t *out1,
 
     return 0;
 }
+#endif
 
+#if CONFIG_ADPCM_SWF_DECODER
 static void adpcm_swf_decode(AVCodecContext *avctx, const uint8_t *buf, int buf_size, int16_t *samples)
 {
     ADPCMDecodeContext *c = avctx->priv_data;
@@ -1030,6 +1043,7 @@ static void adpcm_swf_decode(AVCodecContext *avctx, const uint8_t *buf, int buf_
         }
     }
 }
+#endif
 
 int16_t ff_adpcm_argo_expand_nibble(ADPCMChannelStatus *cs, int nibble, int shift, int flag)
 {
@@ -1048,6 +1062,7 @@ int16_t ff_adpcm_argo_expand_nibble(ADPCMChannelStatus *cs, int nibble, int shif
     return sample;
 }
 
+#if CONFIG_ADPCM_SANYO_DECODER
 static int adpcm_sanyo_expand3(ADPCMChannelStatus *c, int bits)
 {
     int sign, delta, add;
@@ -1213,7 +1228,9 @@ static int adpcm_sanyo_expand5(ADPCMChannelStatus *c, int bits)
     c->step = av_clip(c->step, 1, 1024);
     return c->predictor;
 }
+#endif
 
+#if CONFIG_ADPCM_IMA_CITRIX_DECODER
 static int adpcm_citrix_expand(ADPCMChannelStatus *c, int bits)
 {
     int step = ff_adpcm_step_table[c->step_index];
@@ -1226,6 +1243,7 @@ static int adpcm_citrix_expand(ADPCMChannelStatus *c, int bits)
     c->predictor = av_clip_int16(c->predictor + add);
     return c->predictor;
 }
+#endif
 
 /**
  * Get the number of samples (per channel) that will be decoded from the packet.
@@ -1521,11 +1539,11 @@ static int adpcm_decode_frame(AVCodecContext *avctx, AVFrame *frame,
 {
     const uint8_t *buf = avpkt->data;
     int buf_size = avpkt->size;
-    ADPCMDecodeContext *c = avctx->priv_data;
+    av_unused ADPCMDecodeContext *c = avctx->priv_data;
     int channels = avctx->ch_layout.nb_channels;
-    int16_t *samples;
-    int16_t **samples_p;
-    int st; /* stereo */
+    av_unused int16_t *samples;
+    av_unused int16_t **samples_p;
+    av_unused int st; /* stereo */
     int nb_samples, coded_samples, approx_nb_samples, ret;
     GetByteContext gb;
 

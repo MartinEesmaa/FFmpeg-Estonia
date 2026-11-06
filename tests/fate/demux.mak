@@ -7,6 +7,9 @@ fate-adts-id3v1-demux: CMD = framecrc -f aac -i $(TARGET_SAMPLES)/aac/id3v1.aac 
 fate-adts-id3v2-demux: CMD = framecrc -f aac -i $(TARGET_SAMPLES)/aac/id3v2.aac -c:a copy
 fate-adts-id3v2-two-tags-demux: CMD = framecrc -i $(TARGET_SAMPLES)/aac/id3v2_two_tags.aac -c:a copy
 
+FATE_FFPROBE_DEMUX-$(call DEMDEC, AAC, AAC) += fate-adts-noparse-demux
+fate-adts-noparse-demux: CMD = ffprobe_demux $(TARGET_SAMPLES)/aac/id3v1.aac -f aac -fflags +noparse
+
 FATE_SAMPLES_DEMUX-$(call FRAMECRC, AA,, SIPR_PARSER) += fate-aa-demux
 fate-aa-demux: CMD = framecrc -i $(TARGET_SAMPLES)/aa/bush.aa -c:a copy
 
@@ -201,8 +204,71 @@ tests/data/hls-webvtt.m3u8: ffmpeg$(PROGSSUF)$(EXESUF) | tests/data
 
 FATE_FFMPEG-$(call FILTERDEMDECENCMUX, AEVALSRC ARESAMPLE, HLS MPEGTS WEBVTT, MP2 PCM_F64LE, MP2FIXED, HLS MPEGTS NULL WEBVTT, LAVFI_INDEV MPEGAUDIO_PARSER PIPE_PROTOCOL) += fate-hls-webvtt-demux
 fate-hls-webvtt-demux: tests/data/hls-webvtt.m3u8
-fate-hls-webvtt-demux: CLEANFILES = tests/data/hls-webvtt*.m3u8 tests/data/hls-webvtt-*.ts tests/data/hls-webvtt-*.vtt
+fate-hls-webvtt-demux: CLEANFILES = tests/data/hls-webvtt.m3u8 tests/data/hls-webvtt-a.m3u8 tests/data/hls-webvtt-s.m3u8 tests/data/hls-webvtt-a[0-9]*.ts tests/data/hls-webvtt-s[0-9]*.vtt
 fate-hls-webvtt-demux: CMD = fmtstdout webvtt -copyts -i $(TARGET_PATH)/tests/data/hls-webvtt.m3u8 -map 0:a -c copy -f null - -map 0:s -c copy
+
+define HLS_WEBVTT_MAP_DATA
+tests/data/$(1).m3u8: TAG = GEN
+tests/data/$(1).m3u8: ffmpeg$(PROGSSUF)$(EXESUF) | tests/data
+	$$(M)$$(TARGET_EXEC) $$(TARGET_PATH)/$$< -nostdin \
+        -f lavfi -i "aevalsrc=0:d=6" -c:a mp2fixed -flags +bitexact -muxdelay 0 -muxpreload 0 -output_ts_offset 10 \
+        -f hls -hls_time 2 -hls_list_size 0 \
+        -hls_segment_filename $$(TARGET_PATH)/tests/data/$(1)-a%d.ts \
+        $$(TARGET_PATH)/tests/data/$(1)-a.m3u8 2>/dev/null
+	$$(Q)printf '#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2,\n$(1)-s0.vtt\n#EXTINF:2,\n$(1)-s1.vtt\n#EXTINF:2,\n$(1)-s2.vtt\n#EXT-X-ENDLIST\n' > tests/data/$(1)-s.m3u8
+	$$(Q)printf 'WEBVTT\nX-TIMESTAMP-MAP=MPEGTS:900000,LOCAL:00:00:00.000\n\n00:00.500 --> 00:01.500\nfirst\n\n00:01.000 --> 00:04.500 line:1\nlong\n' > tests/data/$(1)-s0.vtt
+	$$(Q)printf 'WEBVTT\nX-TIMESTAMP-MAP=MPEGTS:900000,LOCAL:00:00:00.000\n\n00:01.000 --> 00:04.500 line:1\nlong\n\n00:03.000 --> 00:03.900 align:start\nsecond\n' > tests/data/$(1)-s1.vtt
+	$$(Q)printf 'WEBVTT\nX-TIMESTAMP-MAP=MPEGTS:900000,LOCAL:00:00:00.000\n\n00:01.000 --> 00:04.500 line:1\nlong\n\n00:04.500 --> 00:05.500\nthird\n' > tests/data/$(1)-s2.vtt
+	$$(Q)printf '#EXTM3U\n#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="s",NAME="en",URI="$(1)-s.m3u8"\n#EXT-X-STREAM-INF:BANDWIDTH=64000,SUBTITLES="s"\n$(1)-a.m3u8\n' > $$@
+
+fate-$(1)-demux: tests/data/$(1).m3u8
+fate-$(1)-demux: CLEANFILES = tests/data/$(1).m3u8 tests/data/$(1)-a.m3u8 tests/data/$(1)-s.m3u8 tests/data/$(1)-a[0-9]*.ts tests/data/$(1)-s[0-9]*.vtt
+endef
+
+$(eval $(call HLS_WEBVTT_MAP_DATA,hls-webvtt-map))
+$(eval $(call HLS_WEBVTT_MAP_DATA,hls-webvtt-seek))
+
+FATE_HLS_WEBVTT_MAP-$(call FILTERDEMDECENCMUX, AEVALSRC ARESAMPLE, HLS MPEGTS WEBVTT, MP2 PCM_F64LE, MP2FIXED, HLS MPEGTS NULL WEBVTT, LAVFI_INDEV MPEGAUDIO_PARSER PIPE_PROTOCOL) += fate-hls-webvtt-map-demux fate-hls-webvtt-seek-demux
+FATE_FFMPEG += $(FATE_HLS_WEBVTT_MAP-yes)
+fate-hls-webvtt-map-demux: CMD = fmtstdout webvtt -copyts -i $(TARGET_PATH)/tests/data/hls-webvtt-map.m3u8 -map 0:a -c copy -f null - -map 0:s -c copy
+fate-hls-webvtt-seek-demux: CMD = fmtstdout webvtt -copyts -ss 4 -i $(TARGET_PATH)/tests/data/hls-webvtt-seek.m3u8 -map 0:s -c copy
+
+tests/data/hls-webvtt-discont.m3u8: TAG = GEN
+tests/data/hls-webvtt-discont.m3u8: ffmpeg$(PROGSSUF)$(EXESUF) | tests/data
+	$(M)$(TARGET_EXEC) $(TARGET_PATH)/$< -nostdin \
+        -f lavfi -i "aevalsrc=0:d=2" -c:a mp2fixed -flags +bitexact -muxdelay 0 -muxpreload 0 -output_ts_offset 10 \
+        -f mpegts $(TARGET_PATH)/tests/data/hls-webvtt-discont-a0.ts 2>/dev/null
+	$(Q)cp tests/data/hls-webvtt-discont-a0.ts tests/data/hls-webvtt-discont-a1.ts
+	$(Q)printf '#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2,\nhls-webvtt-discont-a0.ts\n#EXT-X-DISCONTINUITY\n#EXTINF:2,\nhls-webvtt-discont-a1.ts\n#EXT-X-ENDLIST\n' > tests/data/hls-webvtt-discont-a.m3u8
+	$(Q)printf 'WEBVTT\nX-TIMESTAMP-MAP=MPEGTS:900000,LOCAL:00:00:00.000\n\n00:00.500 --> 00:01.500\nhello\n' > tests/data/hls-webvtt-discont-s0.vtt
+	$(Q)cp tests/data/hls-webvtt-discont-s0.vtt tests/data/hls-webvtt-discont-s1.vtt
+	$(Q)printf '#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2,\nhls-webvtt-discont-s0.vtt\n#EXT-X-DISCONTINUITY\n#EXTINF:2,\nhls-webvtt-discont-s1.vtt\n#EXT-X-ENDLIST\n' > tests/data/hls-webvtt-discont-s.m3u8
+	$(Q)printf '#EXTM3U\n#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="s",NAME="en",URI="hls-webvtt-discont-s.m3u8"\n#EXT-X-STREAM-INF:BANDWIDTH=64000,SUBTITLES="s"\nhls-webvtt-discont-a.m3u8\n' > $@
+
+FATE_HLS_WEBVTT_DISCONT-$(call FILTERDEMDECENCMUX, AEVALSRC ARESAMPLE, HLS MPEGTS WEBVTT, MP2 PCM_F64LE, MP2FIXED, MPEGTS NULL WEBVTT, LAVFI_INDEV MPEGAUDIO_PARSER PIPE_PROTOCOL) += fate-hls-webvtt-discont-demux
+FATE_FFMPEG += $(FATE_HLS_WEBVTT_DISCONT-yes)
+fate-hls-webvtt-discont-demux: tests/data/hls-webvtt-discont.m3u8
+fate-hls-webvtt-discont-demux: CLEANFILES = tests/data/hls-webvtt-discont.m3u8 tests/data/hls-webvtt-discont-a.m3u8 tests/data/hls-webvtt-discont-s.m3u8 tests/data/hls-webvtt-discont-a[0-9]*.ts tests/data/hls-webvtt-discont-s[0-9]*.vtt
+fate-hls-webvtt-discont-demux: CMD = fmtstdout webvtt -copyts -i $(TARGET_PATH)/tests/data/hls-webvtt-discont.m3u8 -map 0:a -c copy -f null - -map 0:s -c copy
+
+tests/data/hls-webvtt-wrap.m3u8: TAG = GEN
+tests/data/hls-webvtt-wrap.m3u8: ffmpeg$(PROGSSUF)$(EXESUF) | tests/data
+	$(M)$(TARGET_EXEC) $(TARGET_PATH)/$< -nostdin \
+        -f lavfi -i "aevalsrc=0:d=6" -c:a mp2fixed -flags +bitexact -muxdelay 0 -muxpreload 0 -output_ts_offset 95442 \
+        -f hls -hls_time 2 -hls_list_size 0 \
+        -hls_segment_filename $(TARGET_PATH)/tests/data/hls-webvtt-wrap-a%d.ts \
+        $(TARGET_PATH)/tests/data/hls-webvtt-wrap-a.m3u8 2>/dev/null
+	$(Q)printf '#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2,\nhls-webvtt-wrap-s0.vtt\n#EXTINF:2,\nhls-webvtt-wrap-s1.vtt\n#EXTINF:2,\nhls-webvtt-wrap-s2.vtt\n#EXT-X-ENDLIST\n' > tests/data/hls-webvtt-wrap-s.m3u8
+	$(Q)printf 'WEBVTT\nX-TIMESTAMP-MAP=MPEGTS:8589780020,LOCAL:00:00:00.000\n\n00:00.500 --> 00:01.500\nbefore\n\n00:01.500 --> 00:02.500\nacross\n' > tests/data/hls-webvtt-wrap-s0.vtt
+	$(Q)printf 'WEBVTT\nX-TIMESTAMP-MAP=MPEGTS:25428,LOCAL:00:00:02.000\n\n00:01.500 --> 00:02.500\nacross\n\n00:03.000 --> 00:03.900\nafter\n' > tests/data/hls-webvtt-wrap-s1.vtt
+	$(Q)printf 'WEBVTT\nX-TIMESTAMP-MAP=MPEGTS:205428,LOCAL:00:00:04.000\n\n00:04.500 --> 00:05.500\nlast\n' > tests/data/hls-webvtt-wrap-s2.vtt
+	$(Q)printf '#EXTM3U\n#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="s",NAME="en",URI="hls-webvtt-wrap-s.m3u8"\n#EXT-X-STREAM-INF:BANDWIDTH=64000,SUBTITLES="s"\nhls-webvtt-wrap-a.m3u8\n' > $@
+
+FATE_HLS_WEBVTT_WRAP-$(call FILTERDEMDECENCMUX, AEVALSRC ARESAMPLE, HLS MPEGTS WEBVTT, MP2 PCM_F64LE, MP2FIXED, HLS MPEGTS NULL FRAMECRC, LAVFI_INDEV MPEGAUDIO_PARSER PIPE_PROTOCOL) += fate-hls-webvtt-wrap-demux
+FATE_FFMPEG += $(FATE_HLS_WEBVTT_WRAP-yes)
+fate-hls-webvtt-wrap-demux: tests/data/hls-webvtt-wrap.m3u8
+fate-hls-webvtt-wrap-demux: CLEANFILES = tests/data/hls-webvtt-wrap.m3u8 tests/data/hls-webvtt-wrap-a.m3u8 tests/data/hls-webvtt-wrap-s.m3u8 tests/data/hls-webvtt-wrap-a[0-9]*.ts tests/data/hls-webvtt-wrap-s[0-9]*.vtt
+fate-hls-webvtt-wrap-demux: CMD = framecrc -copyts -i $(TARGET_PATH)/tests/data/hls-webvtt-wrap.m3u8 -map 0:a -c copy -f null - -map 0:s -c copy
 
 tests/data/hls-self-variant.m3u8: TAG = GEN
 tests/data/hls-self-variant.m3u8: | tests/data
@@ -213,6 +279,48 @@ fate-hls-self-variant-demux: tests/data/hls-self-variant.m3u8
 fate-hls-self-variant-demux: CLEANFILES = tests/data/hls-self-variant.m3u8
 fate-hls-self-variant-demux: CMD = ffprobe_demux $(TARGET_PATH)/tests/data/hls-self-variant.m3u8
 
+tests/data/hls-shared-renditions.m3u8: TAG = GEN
+tests/data/hls-shared-renditions.m3u8: ffmpeg$(PROGSSUF)$(EXESUF) | tests/data
+	$(M)$(TARGET_EXEC) $(TARGET_PATH)/$< -nostdin \
+        -f lavfi -i "aevalsrc=0:s=16000:d=2" -c:a mp2fixed -flags +bitexact -muxdelay 0 -muxpreload 0 \
+        -f hls -hls_time 2 -hls_list_size 0 \
+        -hls_segment_filename $(TARGET_PATH)/tests/data/hls-shared-renditions-a%d.ts \
+        $(TARGET_PATH)/tests/data/hls-shared-renditions-a.m3u8 2>/dev/null
+	$(Q)printf '#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2,\nhls-shared-renditions-s0.vtt\n#EXT-X-ENDLIST\n' > tests/data/hls-shared-renditions-s.m3u8
+	$(Q)printf 'WEBVTT\n\n00:00.500 --> 00:01.500\nfirst\n' > tests/data/hls-shared-renditions-s0.vtt
+	$(Q)printf '#EXTM3U\n#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="g",NAME="German",LANGUAGE="de",URI="hls-shared-renditions-s.m3u8"\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="g",NAME="English",LANGUAGE="en",DEFAULT=YES\n#EXT-X-STREAM-INF:BANDWIDTH=64000,AUDIO="g",SUBTITLES="g"\nhls-shared-renditions-a.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=128000,AUDIO="g",SUBTITLES="g"\nhls-shared-renditions-a.m3u8\n' > $@
+
+FATE_HLS_SHARED_RENDITIONS-$(call FILTERDEMDECENCMUX, AEVALSRC ARESAMPLE, HLS MPEGTS WEBVTT, MP3FLOAT PCM_F64LE, MP2FIXED, HLS MPEGTS, LAVFI_INDEV MPEGAUDIO_PARSER) += fate-hls-shared-renditions-demux
+FATE_FFMPEG_FFPROBE += $(FATE_HLS_SHARED_RENDITIONS-yes)
+fate-hls-shared-renditions-demux: tests/data/hls-shared-renditions.m3u8
+fate-hls-shared-renditions-demux: CLEANFILES = tests/data/hls-shared-renditions*.m3u8 tests/data/hls-shared-renditions-*.ts tests/data/hls-shared-renditions-*.vtt
+fate-hls-shared-renditions-demux: CMD = ffprobe_demux $(TARGET_PATH)/tests/data/hls-shared-renditions.m3u8 -show_programs
+
+tests/data/hls-start-master.m3u8: TAG = GEN
+tests/data/hls-start-master.m3u8: ffmpeg$(PROGSSUF)$(EXESUF) | tests/data
+	$(M)$(TARGET_EXEC) $(TARGET_PATH)/$< -nostdin \
+        -f lavfi -i "aevalsrc=0:s=16000:d=0.576" -c:a mp2fixed -flags +bitexact -muxdelay 0 -muxpreload 0 \
+        -f hls -hls_time 0.144 -hls_list_size 0 -hls_flags omit_endlist \
+        -hls_segment_filename $(TARGET_PATH)/tests/data/hls-start-%d.ts \
+        $(TARGET_PATH)/tests/data/hls-start-rendition.m3u8 2>/dev/null
+	$(Q)printf '#EXTM3U\n#EXT-X-START:TIME-OFFSET=0.5\n#EXT-X-TARGETDURATION:0\n#EXTINF:0.144,\nhls-start-0.ts\n#EXTINF:0.144,\nhls-start-1.ts\n#EXTINF:0.144,\nhls-start-2.ts\n#EXTINF:0.144,\nhls-start-3.ts\n' > tests/data/hls-start-media.m3u8
+	$(Q)printf '#EXTM3U\n#EXT-X-START:TIME-OFFSET=0.5\n#EXT-X-ENDLIST\n#EXT-X-TARGETDURATION:0\n#EXTINF:0.144,\nhls-start-0.ts\n#EXTINF:0.144,\nhls-start-1.ts\n#EXTINF:0.144,\nhls-start-2.ts\n#EXTINF:0.144,\nhls-start-3.ts\n' > tests/data/hls-start-endlist.m3u8
+	$(Q)printf '#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",NAME="a",URI="hls-start-rendition.m3u8"\n#EXT-X-STREAM-INF:BANDWIDTH=64000,AUDIO="a"\nhls-start-media.m3u8\n' > tests/data/hls-start-variant.m3u8
+	$(Q)printf '#EXTM3U\n#EXT-X-START:PRECISE=NO,TIME-OFFSET=0.1\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",NAME="a",URI="hls-start-rendition.m3u8"\n#EXT-X-STREAM-INF:BANDWIDTH=64000,AUDIO="a"\nhls-start-media.m3u8\n' > $@
+
+FATE_HLS_START = fate-hls-start-master-demux  \
+                 fate-hls-start-variant-demux \
+                 fate-hls-start-media-demux   \
+                 fate-hls-start-endlist-demux
+
+FATE_HLS_START-$(call FILTERDEMDECENCMUX, AEVALSRC ARESAMPLE, HLS MPEGTS, MP2 MP3FLOAT PCM_F64LE, MP2FIXED, HLS MPEGTS, LAVFI_INDEV MPEGAUDIO_PARSER) += $(FATE_HLS_START)
+FATE_FFMPEG_FFPROBE += $(FATE_HLS_START-yes)
+$(FATE_HLS_START): tests/data/hls-start-master.m3u8
+fate-hls-start-master-demux: CMD = ffprobe_demux $(TARGET_PATH)/tests/data/hls-start-master.m3u8 -prefer_x_start 1 -max_reload 1
+fate-hls-start-variant-demux: CMD = ffprobe_demux $(TARGET_PATH)/tests/data/hls-start-variant.m3u8 -prefer_x_start 1 -max_reload 1
+fate-hls-start-media-demux: CMD = ffprobe_demux $(TARGET_PATH)/tests/data/hls-start-media.m3u8 -prefer_x_start 1 -max_reload 1
+fate-hls-start-endlist-demux: CMD = ffprobe_demux $(TARGET_PATH)/tests/data/hls-start-endlist.m3u8 -prefer_x_start 1 -max_reload 1
+
 FATE_SAMPLES_DEMUX-$(call PARSERDEM, JPEGXS, IMAGE_JPEGXS_PIPE, CONCAT_PROTOCOL) += fate-jxs-concat-demux
 fate-jxs-concat-demux: CMD = framecrc "-i concat:$(TARGET_SAMPLES)/jxs/lena.jxs|$(TARGET_SAMPLES)/jxs/lena.jxs -c:v copy"
 
@@ -220,13 +328,8 @@ fate-jxs-concat-demux: CMD = framecrc "-i concat:$(TARGET_SAMPLES)/jxs/lena.jxs|
 # fails. After find_stream_info the layout must stay 80, not 0.
 # ffprobe cannot be used: it aborts on the failed decoder open before
 # printing -show_entries.
-tests/data/vpk-div0.vpk: TAG = GEN
-tests/data/vpk-div0.vpk: | tests/data
-	$(Q)printf '\040\113\120\126\126\120\000\370\004\000\073\003\141\071\126\062\066\066\060\070\120' > $@
-
-FATE_FFMPEG-$(call ALLYES, VPK_DEMUXER ADPCM_PSX_DECODER FILE_PROTOCOL NULL_MUXER) += fate-demux-vpk-div0
-fate-demux-vpk-div0: tests/data/vpk-div0.vpk
-fate-demux-vpk-div0: CMD = ffmpeg -i $(TARGET_PATH)/tests/data/vpk-div0.vpk -map 0 -c copy -f null -
+FATE_FFMPEG-$(call ALLYES, VPK_DEMUXER ADPCM_PSX_DECODER PIPE_PROTOCOL NULL_MUXER) += fate-demux-vpk-div0
+fate-demux-vpk-div0: CMD = printf "\040\113\120\126\126\120\000\370\004\000\073\003\141\071\126\062\066\066\060\070\120" | ffmpeg -i pipe: -map 0 -c copy -f null -
 fate-demux-vpk-div0: CMP = grep
 fate-demux-vpk-div0: REF = 80 channels
 

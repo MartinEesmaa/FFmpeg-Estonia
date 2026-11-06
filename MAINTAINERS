@@ -72,6 +72,7 @@ mailing lists                           (W: https://ffmpeg.org/contact.html#Mail
 Twitter                                 Reynaldo H. Verdejo Pinochet
 Launchpad                               Timothy Gu
 ffmpeg-security                     [2] (L: ffmpeg-security@ffmpeg.org) (W: https://ffmpeg.org/security.html) Michael Niedermayer, Reimar Doeffinger
+YesWeHack Security reports          [2] Timo Rothenpieler, Michael Niedermayer
 
 libavutil
 =========
@@ -105,6 +106,21 @@ Other:
   rational.c, rational.h            [2] Michael Niedermayer
   rc4                                   Reimar Doeffinger
   ripemd.c, ripemd.h                    James Almer
+  tests/ambient_viewing_environment.c,
+  tests/buffer.c, tests/csp.c,
+  tests/detection_bbox.c,
+  tests/dovi_meta.c,
+  tests/downmix_info.c,
+  tests/film_grain_params.c,
+  tests/hdr_dynamic_metadata.c,
+  tests/hdr_dynamic_vivid_metadata.c,
+  tests/mastering_display_metadata.c,
+  tests/mathematics.c, tests/rc4.c,
+  tests/samplefmt.c, tests/side_data.c,
+  tests/spherical.c, tests/stereo3d.c,
+  tests/tdrdi.c, tests/timestamp.c,
+  tests/video_enc_params.c,
+  tests/video_hint.c                    Marcos Ashton Iglesias
   tx*                               [2] Lynne
 
 
@@ -307,7 +323,6 @@ libavdevice
   iec61883.c                            Georg Lippitsch
   lavfi                                 Stefano Sabatini
   libdc1394.c                           Roman Shaposhnik
-  opengl_enc.c                          Lukasz Marek
   pulse_audio_enc.c                     Lukasz Marek
   sdl                                   Stefano Sabatini
   sdl2.c                                Josh de Kock
@@ -504,6 +519,7 @@ Protocols:
   bluray.c                              Petri Hintukainen
   ftp.c                                 Lukasz Marek
   http.c                                Ronald S. Bultje
+  libcurl.c                             Kacper Michajłow
   libsrt.c                              Zhao Zhili
   libssh.c                              Lukasz Marek
   libzmq.c                              Andriy Gelman

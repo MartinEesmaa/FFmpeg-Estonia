@@ -74,7 +74,7 @@ static int compile_backend(SwsContext *ctx, const SwsOpBackend *backend,
         return AVERROR(ENOMEM);
 
     /* Ensure these are always set during compilation */
-    ff_sws_op_list_update_comps(copy);
+    ff_sws_op_list_update(copy);
 
     ret = backend->compile(ctx, copy, &compiled);
     if (ret < 0) {
@@ -475,19 +475,19 @@ static void op_list_get_plane_copy(const SwsOpList *ops, SwsPass *pass)
     const SwsOp *read  = ff_sws_op_list_input(ops);
     if (!write || write->rw.mode != SWS_RW_PLANAR ||
         !read  || read->rw.mode  != SWS_RW_PLANAR ||
-        read->type    != write->type ||
+        read->rw.type != write->rw.type ||
         read->rw.frac != write->rw.frac)
         return; /* only regular planes can be directly ref'd */
 
-    const SwsOp *prev = &ops->ops[ops->num_ops - 2];
+    const SwsOp *prev = ff_sws_op_prev(write);
     int *plane_copy = pass->output->plane_copy;
     for (int i = 0; i < write->rw.elems; i++) {
-        SwsCompFlags flags = prev->comps.flags[i];
+        SwsCompFlags flags = prev->outputs[i].flags;
         if (!(flags & SWS_COMP_COPY))
             continue;
 
         const int out_idx = ops->plane_dst[i];
-        switch (prev->comps.dep_in[i]) {
+        switch (prev->outputs[i].dep_in) {
         case SWS_COMP(0): plane_copy[out_idx] = ops->plane_src[0]; break;
         case SWS_COMP(1): plane_copy[out_idx] = ops->plane_src[1]; break;
         case SWS_COMP(2): plane_copy[out_idx] = ops->plane_src[2]; break;
@@ -514,7 +514,7 @@ static int rw_pixel_bits(const SwsOp *op)
     case SWS_RW_PACKED: elems = op->rw.elems; break;
     }
 
-    const int size  = ff_sws_pixel_type_size(op->type);
+    const int size  = ff_sws_pixel_type_size(op->rw.type);
     const int bits  = 8 >> op->rw.frac;
     av_assert1(bits >= 1);
     return elems * size * bits;
@@ -707,7 +707,7 @@ static SwsCompMask plane_mask_flags(const SwsOp *op, SwsCompFlags flags)
 {
     SwsCompMask planes = 0;
     for (int c = 0; c < 4; c++) {
-        if (op->comps.flags[c] & flags)
+        if (op->outputs[c].flags & flags)
             planes |= SWS_COMP(c);
     }
 
@@ -729,7 +729,8 @@ static int compile_subpass(const CompileArgs *args, SwsOpList **pops,
         /* Split off copied and constant planes into a separate subpass,
          * since these are likely to be handled by the memcpy backend */
         av_assert0(ops->num_ops >= 2);
-        const SwsOp *prev = &ops->ops[ops->num_ops - 2];
+        const SwsOp *write = ff_sws_op_list_output(ops);
+        const SwsOp *prev = ff_sws_op_prev(write);
         SwsCompMask planes = plane_mask_flags(prev, SWS_COMP_COPY | SWS_COMP_CONST);
         RET(ff_sws_op_list_split_planes(ops, &rest, planes));
         if (rest) {

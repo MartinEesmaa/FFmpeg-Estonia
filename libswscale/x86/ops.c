@@ -26,7 +26,7 @@
 
 #include "../ops_chain.h"
 #include "../uops.h"
-#include "../uops_macros.h"
+#include "uops_macros.h"
 
 static int setup_rw_packed(const SwsImplParams *params, SwsImplResult *out)
 {
@@ -702,12 +702,7 @@ static int compile_uops_x86(SwsContext *ctx, const SwsUOpList *uops, SwsCompiled
     memcpy(out->over_read,  chain->over_read,  sizeof(out->over_read));
     memcpy(out->over_write, chain->over_write, sizeof(out->over_write));
 
-    av_log(ctx, AV_LOG_DEBUG, "Compiled micro-ops:\n");
-    for (int i = 0; i < uops->num_ops; i++) {
-        char name[SWS_UOP_NAME_MAX];
-        ff_sws_uop_name(&uops->ops[i], name);
-        av_log(ctx, AV_LOG_DEBUG, "    %s\n", name);
-    }
+    ff_sws_uop_list_print(ctx, AV_LOG_DEBUG, uops);
 
     return 0;
 
@@ -716,7 +711,7 @@ fail:
     return ret;
 }
 
-static int compile_x86(SwsContext *ctx, const SwsOpList *ops, SwsCompiledOp *out)
+static int compile_ops_x86(SwsContext *ctx, const SwsOpList *ops, SwsCompiledOp *out)
 {
     const int cpu_flags = av_get_cpu_flags();
     const int mmsize = get_mmsize();
@@ -726,7 +721,8 @@ static int compile_x86(SwsContext *ctx, const SwsOpList *ops, SwsCompiledOp *out
     SwsUOpFlags flags = SWS_UOP_FLAG_PSHUFB
                       | SWS_UOP_FLAG_EXPAND_BIT
                       | SWS_UOP_FLAG_READ_PALETTE
-                      | SWS_UOP_FLAG_ADD;
+                      | SWS_UOP_FLAG_ADD
+                      | SWS_UOP_FLAG_PUNNING;
     if (EXTERNAL_FMA3(cpu_flags))
         flags |= SWS_UOP_FLAG_FMA;
 
@@ -748,7 +744,7 @@ fail:
 const SwsOpBackend backend_x86 = {
     .name           = "x86",
     .flags          = SWS_BACKEND_X86,
-    .compile        = compile_x86,
+    .compile        = compile_ops_x86,
     .compile_uops   = compile_uops_x86,
     .hw_format      = AV_PIX_FMT_NONE,
 };

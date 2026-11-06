@@ -83,7 +83,7 @@ static int aarch64_setup_linear(const SwsAArch64OpImplParams *p,
      * The same order must be followed in asmgen_op_linear().
      */
     int i_coeff = 0;
-    for (int i = 0; i < 4; i++) {
+    LOOP_MASK(p, i) {
         for (int j = 0; j < 5; j++) {
             const int jj = (j == 0) ? 4 : (j - 1);
             if (!(p->par.lin.zero & SWS_MASK(i, jj))) {
@@ -151,7 +151,7 @@ static int aarch64_setup(const SwsUOp *uop, const SwsAArch64OpImplParams *p,
 }
 
 /*********************************************************************/
-static int aarch64_compile_uops(SwsContext *ctx, const SwsUOpList *uops,
+static int compile_uops_aarch64(SwsContext *ctx, const SwsUOpList *uops,
                                 SwsCompiledOp *out)
 {
     int ret;
@@ -218,19 +218,21 @@ error:
 }
 
 /*********************************************************************/
-static int aarch64_compile(SwsContext *ctx, const SwsOpList *ops,
-                           SwsCompiledOp *out)
+static int compile_ops_aarch64(SwsContext *ctx, const SwsOpList *ops,
+                               SwsCompiledOp *out)
 {
     SwsUOpList *uops = ff_sws_uop_list_alloc();
     if (!uops)
         return AVERROR(ENOMEM);
 
-    const SwsUOpFlags flags = (ctx->flags & SWS_BITEXACT) ? 0 : SWS_UOP_FLAG_FMA;
+    SwsUOpFlags flags = SWS_UOP_FLAG_PUNNING;
+    if (!(ctx->flags & SWS_BITEXACT))
+        flags |= SWS_UOP_FLAG_FMA;
     int ret = ff_sws_ops_translate(ctx, ops, flags, uops);
     if (ret < 0)
         goto error;
 
-    ret = aarch64_compile_uops(ctx, uops, out);
+    ret = compile_uops_aarch64(ctx, uops, out);
 
 error:
     ff_sws_uop_list_free(&uops);
@@ -241,7 +243,7 @@ error:
 const SwsOpBackend backend_aarch64 = {
     .name         = "aarch64",
     .flags        = SWS_BACKEND_AARCH64,
-    .compile      = aarch64_compile,
-    .compile_uops = aarch64_compile_uops,
+    .compile      = compile_ops_aarch64,
+    .compile_uops = compile_uops_aarch64,
     .hw_format    = AV_PIX_FMT_NONE,
 };

@@ -50,6 +50,13 @@ void ff_hscale_16_to_19_sub_lsx(SwsInternal *c, int16_t *_dst, int dstW,
                                 const uint8_t *_src, const int16_t *filter,
                                 const int32_t *filterPos, int filterSize, int sh);
 
+void ff_hyscale_fast_lsx(SwsInternal *c, int16_t *dst, int dstWidth,
+                         const uint8_t *src, int srcW, int xInc);
+
+void ff_hcscale_fast_lsx(SwsInternal *c, int16_t *dst1, int16_t *dst2,
+                         int dstWidth, const uint8_t *src1,
+                         const uint8_t *src2, int srcW, int xInc);
+
 void lumRangeFromJpeg_lsx(int16_t *dst, int width, uint32_t coeff, int64_t offset);
 void chrRangeFromJpeg_lsx(int16_t *dstU, int16_t *dstV, int width, uint32_t coeff, int64_t offset);
 void lumRangeToJpeg_lsx(int16_t *dst, int width, uint32_t coeff, int64_t offset);
@@ -207,5 +214,27 @@ av_cold void ff_sws_init_output_lasx(SwsInternal *c,
                                      yuv2packedX_fn *yuv2packedX,
                                      yuv2anyX_fn *yuv2anyX);
 #endif // #if HAVE_LASX
+
+int yuv420_nv12_bgra32_lsx(SwsInternal *c, const uint8_t *const src[], const int srcStride[],
+                           int srcSliceY, int srcSliceH, uint8_t *const dst[], const int dstStride[]);
+int yuv420_nv21_bgra32_lsx(SwsInternal *c, const uint8_t *const src[], const int srcStride[],
+                           int srcSliceY, int srcSliceH, uint8_t *const dst[], const int dstStride[]);
+int yuv420_nv12_rgba32_lsx(SwsInternal *c, const uint8_t *const src[], const int srcStride[],
+                           int srcSliceY, int srcSliceH, uint8_t *const dst[], const int dstStride[]);
+int yuv420_nv21_rgba32_lsx(SwsInternal *c, const uint8_t *const src[], const int srcStride[],
+                           int srcSliceY, int srcSliceH, uint8_t *const dst[], const int dstStride[]);
+int yuv420_nv12_argb32_lsx(SwsInternal *c, const uint8_t *const src[], const int srcStride[],
+                           int srcSliceY, int srcSliceH, uint8_t *const dst[], const int dstStride[]);
+int yuv420_nv21_argb32_lsx(SwsInternal *c, const uint8_t *const src[], const int srcStride[],
+                           int srcSliceY, int srcSliceH, uint8_t *const dst[], const int dstStride[]);
+int yuv420_nv12_abgr32_lsx(SwsInternal *c, const uint8_t *const src[], const int srcStride[],
+                           int srcSliceY, int srcSliceH, uint8_t *const dst[], const int dstStride[]);
+int yuv420_nv21_abgr32_lsx(SwsInternal *c, const uint8_t *const src[], const int srcStride[],
+                           int srcSliceY, int srcSliceH, uint8_t *const dst[], const int dstStride[]);
+
+int ff_nv12ToRgb32_c(SwsInternal *c, const uint8_t *const src[], const int srcStride[],
+                     int srcSliceY, int srcSliceH, uint8_t *const dst[], const int dstStride[]);
+int ff_nv21ToRgb32_c(SwsInternal *c, const uint8_t *const src[], const int srcStride[],
+                     int srcSliceY, int srcSliceH, uint8_t *const dst[], const int dstStride[]);
 
 #endif /* SWSCALE_LOONGARCH_SWSCALE_LOONGARCH_H */

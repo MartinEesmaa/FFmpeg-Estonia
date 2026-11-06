@@ -32,7 +32,6 @@
 #include "yuv2rgb_altivec.h"
 #include "libavutil/ppc/util_altivec.h"
 
-#if HAVE_VSX
 #define vzero vec_splat_s32(0)
 
 #if !HAVE_BIGENDIAN
@@ -2014,17 +2013,11 @@ static void hScale16To15_vsx(SwsInternal *c, int16_t *dst, int dstW,
 
 #endif /* !HAVE_BIGENDIAN */
 
-#endif /* HAVE_VSX */
-
 av_cold void ff_sws_init_swscale_vsx(SwsInternal *c)
 {
-#if HAVE_VSX
     enum AVPixelFormat dstFormat = c->opts.dst_format;
     const int cpu_flags = av_get_cpu_flags();
     const unsigned char power8 = HAVE_POWER8 && cpu_flags & AV_CPU_FLAG_POWER8;
-
-    if (!(cpu_flags & AV_CPU_FLAG_VSX))
-        return;
 
 #if !HAVE_BIGENDIAN
     if (c->srcBpc == 8) {
@@ -2203,6 +2196,4 @@ av_cold void ff_sws_init_swscale_vsx(SwsInternal *c)
         }
     }
 #endif /* !HAVE_BIGENDIAN */
-
-#endif /* HAVE_VSX */
 }

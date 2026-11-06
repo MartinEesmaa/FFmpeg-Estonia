@@ -859,6 +859,10 @@ av_cold int ff_mpv_encode_init(AVCodecContext *avctx)
         m->intra_only = 1; /* force intra only for jpeg */
         avctx->delay = 0;
         s->c.low_delay = 1;
+        if (avctx->codec_id == AV_CODEC_ID_MJPEG) {
+            s->c.y_dc_scale_table =
+            s->c.c_dc_scale_table = ff_mpeg12_dc_scale_table[s->c.intra_dc_precision];
+        }
         break;
 #endif
     case AV_CODEC_ID_SPEEDHQ:
@@ -1966,7 +1970,7 @@ vbv_retry:
             pkt->size = avctx->internal->byte_buffer_size;
         }
         if (ret < 0)
-            return -1;
+            return ret;
 
         frame_end(m);
 
@@ -3708,7 +3712,9 @@ static int encode_picture(MPVMainEncContext *const m, const AVPacket *pkt)
         ret = estimate_qp(m, 1);
         if (ret < 0)
             return ret;
-        ff_get_2pass_fcode(m);
+        ret = ff_get_2pass_fcode(m);
+        if (ret < 0)
+            return ret;
     } else if (!(s->c.avctx->flags & AV_CODEC_FLAG_QSCALE)) {
         if (s->c.pict_type == AV_PICTURE_TYPE_B)
             s->lambda = m->last_lambda_for[s->c.pict_type];
@@ -3865,9 +3871,7 @@ static int encode_picture(MPVMainEncContext *const m, const AVPacket *pkt)
                 s->c.chroma_intra_matrix[j] = av_clip_uint8((chroma_matrix[i] * s->c.qscale) >> 3);
                 s->c.       intra_matrix[j] = av_clip_uint8((  luma_matrix[i] * s->c.qscale) >> 3);
             }
-            s->c.y_dc_scale_table =
-            s->c.c_dc_scale_table = ff_mpeg12_dc_scale_table[0];
-            s->c.chroma_intra_matrix[0] = s->c.intra_matrix[0] = 8;
+            s->c.chroma_intra_matrix[0] = s->c.intra_matrix[0] = 8 >> s->c.intra_dc_precision;
         } else {
             static const uint8_t y[32] = {13,13,13,13,13,13,13,13,13,13,13,13,13,13,13,13,13,13,13,13,13,13,13,13,13,13,13,13,13,13,13,13};
             static const uint8_t c[32] = {14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14};

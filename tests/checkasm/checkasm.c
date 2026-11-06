@@ -78,6 +78,9 @@ static const CheckasmTest tests[] = {
     #if CONFIG_AUDIODSP
         { "audiodsp", checkasm_check_audiodsp },
     #endif
+    #if CONFIG_BITPACKED_DECODER
+        { "bitpackeddec", checkasm_check_bitpackeddec },
+    #endif
     #if CONFIG_BLOCKDSP
         { "blockdsp", checkasm_check_blockdsp },
     #endif
@@ -241,6 +244,7 @@ static const CheckasmTest tests[] = {
     #if CONFIG_VVC_DECODER
         { "vvc_alf", checkasm_check_vvc_alf },
         { "vvc_mc",  checkasm_check_vvc_mc  },
+        { "vvc_pred", checkasm_check_vvc_pred },
         { "vvc_sao", checkasm_check_vvc_sao },
     #endif
 #endif
@@ -283,6 +287,9 @@ static const CheckasmTest tests[] = {
     #endif
     #if CONFIG_NLMEANS_FILTER
         { "vf_nlmeans", checkasm_check_nlmeans },
+    #endif
+    #if CONFIG_LIMITER_FILTER
+        { "vf_limiter", checkasm_check_vf_limiter },
     #endif
     #if CONFIG_PP7_FILTER
         { "vf_pp7", checkasm_check_vf_pp7 },

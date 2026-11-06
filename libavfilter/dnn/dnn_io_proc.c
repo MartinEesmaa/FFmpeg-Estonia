@@ -46,10 +46,12 @@ int ff_proc_from_dnn_to_frame(AVFrame *frame, DNNData *output, void *log_ctx)
     int linesize[4] = { 0 };
     void **dst_data = NULL;
     void *middle_data = NULL;
+    void *dst_data_buf[4] = { NULL, NULL, NULL, NULL };
     uint8_t *planar_data[4] = { 0 };
     int plane_size = frame->width * frame->height * sizeof(uint8_t);
     enum AVPixelFormat src_fmt = AV_PIX_FMT_NONE;
     int src_datatype_size = get_datatype_size(output->dt);
+    int channel_idx;
 
     int bytewidth = av_image_get_linesize(frame->format, frame->width, 0);
     if (bytewidth < 0) {
@@ -76,13 +78,25 @@ int ff_proc_from_dnn_to_frame(AVFrame *frame, DNNData *output, void *log_ctx)
             ret = AVERROR(ENOMEM);
             goto err;
         }
-        dst_data = &middle_data;
+        dst_data_buf[0] = middle_data;
+        dst_data = dst_data_buf;
         linesize[0] = frame->width * 3;
     }
 
     switch (frame->format) {
     case AV_PIX_FMT_RGB24:
     case AV_PIX_FMT_BGR24:
+        channel_idx = dnn_get_channel_idx_by_layout(output->layout);
+        if (output->dims[channel_idx] != 3) {
+            av_log(log_ctx, AV_LOG_ERROR,
+                   "dnn_processing to a %s frame requires a 3-channel model "
+                   "output, got %d channels; channel-reducing/expanding "
+                   "models (e.g. single-channel matte output) are not "
+                   "supported by this filter\n",
+                   av_get_pix_fmt_name(frame->format), output->dims[channel_idx]);
+            ret = AVERROR(ENOSYS);
+            goto err;
+        }
         sws_ctx = sws_getContext(frame->width * 3,
                                  frame->height,
                                  src_fmt,
@@ -186,6 +200,7 @@ int ff_proc_from_frame_to_dnn(AVFrame *frame, DNNData *input, void *log_ctx)
     int linesize[4] = { 0 };
     void **src_data = NULL;
     void *middle_data = NULL;
+    void *src_data_buf[4] = { NULL, NULL, NULL, NULL };
     uint8_t *planar_data[4] = { 0 };
     int plane_size = frame->width * frame->height * sizeof(uint8_t);
     enum AVPixelFormat dst_fmt = AV_PIX_FMT_NONE;
@@ -215,7 +230,8 @@ int ff_proc_from_frame_to_dnn(AVFrame *frame, DNNData *input, void *log_ctx)
             ret = AVERROR(ENOMEM);
             goto err;
         }
-        src_data = &middle_data;
+        src_data_buf[0] = middle_data;
+        src_data = src_data_buf;
         linesize[0] = frame->width * 3;
     }
 

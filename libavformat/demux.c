@@ -186,7 +186,7 @@ static int init_input(AVFormatContext *s, const char *filename,
                                   s, 0, s->format_probesize);
 }
 
-static int codec_close(FFStream *sti);
+static int codec_close(AVFormatContext *s, FFStream *sti);
 
 static int update_stream_avctx(AVFormatContext *s)
 {
@@ -200,7 +200,7 @@ static int update_stream_avctx(AVFormatContext *s)
 
         if (avcodec_is_open(sti->avctx)) {
             av_log(s, AV_LOG_DEBUG, "Demuxer context update while decoder is open, closing and trying to re-open\n");
-            ret = codec_close(sti);
+            ret = codec_close(s, sti);
             sti->info->found_decoder = 0;
             if (ret < 0)
                 return ret;
@@ -353,6 +353,29 @@ int avformat_open_input(AVFormatContext **ps, const char *filename,
     fci->raw_packet_buffer_size = 0;
 
     update_stream_avctx(s);
+
+#if FF_API_STREAM_GROUP_ENTRIES
+FF_DISABLE_DEPRECATION_WARNINGS
+    for (unsigned i = 0; i < s->nb_stream_groups; i++) {
+        AVStreamGroup *const  stg = s->stream_groups[i];
+        if (stg->nb_coded_side_data && stg->type == AV_STREAM_GROUP_PARAMS_TILE_GRID) {
+            AVStreamGroupTileGrid *tile_grid = stg->params.tile_grid;
+            for (int j = 0;  j < stg->nb_coded_side_data; j++) {
+                const AVPacketSideData *src = &stg->coded_side_data[j];
+                AVPacketSideData *dst = av_packet_side_data_new(&tile_grid->coded_side_data,
+                                                                &tile_grid->nb_coded_side_data,
+                                                                src->type, src->size, 0);
+                if (!dst) {
+                    ret = AVERROR(ENOMEM);
+                    goto close;
+                }
+
+                memcpy(dst->data, src->data, src->size);
+            }
+        }
+    }
+FF_ENABLE_DEPRECATION_WARNINGS
+#endif
 
     if (options) {
         av_dict_free(options);
@@ -992,7 +1015,8 @@ static void compute_pkt_fields(AVFormatContext *s, AVStream *st,
     AVRational duration;
     int onein_oneout = st->codecpar->codec_id != AV_CODEC_ID_H264 &&
                        st->codecpar->codec_id != AV_CODEC_ID_HEVC &&
-                       st->codecpar->codec_id != AV_CODEC_ID_VVC;
+                       st->codecpar->codec_id != AV_CODEC_ID_VVC  &&
+                       st->codecpar->codec_id != AV_CODEC_ID_IMM6;
 
     if (s->flags & AVFMT_FLAG_NOFILLIN)
         return;
@@ -1336,7 +1360,7 @@ static int64_t ts_to_samples(AVStream *st, int64_t ts)
     return av_rescale(ts, st->time_base.num * st->codecpar->sample_rate, st->time_base.den);
 }
 
-static int codec_close(FFStream *sti)
+static int codec_close(AVFormatContext *s, FFStream *sti)
 {
     AVCodecContext *avctx_new = NULL;
     AVCodecParameters *par_tmp = NULL;
@@ -1345,7 +1369,7 @@ static int codec_close(FFStream *sti)
 
     new_codec =
       (sti->avctx->codec_id != sti->pub.codecpar->codec_id) ?
-      avcodec_find_decoder(sti->pub.codecpar->codec_id) :
+      find_probe_decoder(s, &sti->pub, sti->pub.codecpar->codec_id) :
       sti->avctx->codec;
 
     avctx_new = avcodec_alloc_context3(new_codec);
@@ -1427,7 +1451,7 @@ static int read_frame_internal(AVFormatContext *s, AVPacket *pkt)
         if (sti->need_context_update) {
             if (avcodec_is_open(sti->avctx)) {
                 av_log(s, AV_LOG_DEBUG, "Demuxer context update while decoder is open, closing and trying to re-open\n");
-                ret = codec_close(sti);
+                ret = codec_close(s, sti);
                 sti->info->found_decoder = 0;
                 if (ret < 0)
                     return ret;
@@ -1542,11 +1566,44 @@ static int read_frame_internal(AVFormatContext *s, AVPacket *pkt)
                 sample < sti->last_discard_sample)
                 discard_padding = FFMIN(end_sample - sti->first_discard_sample, duration);
         }
+        if (sti->seek_discard) {
+            const AVCodecParameters *par = st->codecpar;
+
+            if (par->codec_type == AVMEDIA_TYPE_AUDIO && par->sample_rate > 0) {
+                int first = pkt->dts != AV_NOPTS_VALUE && sti->first_dts != AV_NOPTS_VALUE &&
+                            pkt->dts <= sti->first_dts;
+                int in_priming = pkt->pts != AV_NOPTS_VALUE &&
+                                 st->start_time != AV_NOPTS_VALUE &&
+                                 pkt->pts < st->start_time;
+                int64_t skip = 0;
+
+                // The priming ends at the start time.
+                if (in_priming)
+                    skip = ts_to_samples(st, st->start_time - pkt->pts);
+                if (first) {
+                    if (par->initial_padding > 0)
+                        skip = par->initial_padding;
+                } else if (!(sti->seek_to_start && pkt->pts != AV_NOPTS_VALUE && !in_priming)) {
+                    // Past the first packet, the decoder also misses what
+                    // came before.
+                    skip = FFMAX(skip, par->seek_preroll);
+                }
+                sti->skip_samples = FFMAX(sti->skip_samples, FFMIN(skip, INT_MAX));
+            }
+            sti->seek_discard = 0;
+        }
         if (sti->start_skip_samples && (pkt->pts == 0 || pkt->pts == RELATIVE_TS_BASE))
             sti->skip_samples = sti->start_skip_samples;
         sti->skip_samples = FFMAX(0, sti->skip_samples);
         if (sti->skip_samples || discard_padding) {
-            uint8_t *p = av_packet_new_side_data(pkt, AV_PKT_DATA_SKIP_SAMPLES, 10);
+            size_t size;
+            uint8_t *p = av_packet_get_side_data(pkt, AV_PKT_DATA_SKIP_SAMPLES, &size);
+            // Keep what the demuxer set, such as the padding at the end.
+            if (p && size >= 10) {
+                sti->skip_samples = FFMAX(sti->skip_samples, (int)AV_RL32(p));
+                discard_padding   = FFMAX(discard_padding, AV_RL32(p + 4));
+            } else
+                p = av_packet_new_side_data(pkt, AV_PKT_DATA_SKIP_SAMPLES, 10);
             if (p) {
                 AV_WL32(p, sti->skip_samples);
                 AV_WL32(p + 4, discard_padding);
@@ -3175,20 +3232,34 @@ int avformat_find_stream_info(AVFormatContext *ic, AVDictionary **options)
     /* update the stream group parameters from the stream contexts if needed */
     for (unsigned i = 0; i < ic->nb_stream_groups; i++) {
         AVStreamGroup *const stg  = ic->stream_groups[i];
-        AVStreamGroupLayeredVideo *lcevc;
-        const AVStream *st;
+        AVStreamGroupLayeredVideo *stglv;
+        const AVStreamGroupEntry *stge;
 
-        if (stg->type != AV_STREAM_GROUP_PARAMS_LCEVC)
+        switch (stg->type) {
+        case AV_STREAM_GROUP_PARAMS_LCEVC:
+            /* For LCEVC in mpegts, the parser is needed to get the
+             * enhancement layer dimensions */
+            stglv = stg->params.layered_video;
+            stge = stg->entries[stglv->el_index];
+            break;
+        case AV_STREAM_GROUP_PARAMS_GAIN_MAP:
+            /* A gain map is presented at the size of its base rendition */
+            stglv = stg->params.layered_video;
+            if (stg->nb_entries != 2 || stglv->el_index >= 2)
+                continue;
+            stge = stg->entries[!stglv->el_index];
+            if (stge->type != AV_STREAM_GROUP_ENTRY_STREAM)
+                continue;
+            break;
+        default:
             continue;
+        }
 
-        /* For LCEVC in mpegts, the parser is needed to get the enhancement layer
-         * dimensions */
-        lcevc = stg->params.layered_video;
-        if (lcevc->width && lcevc->height)
+        if (stglv->width && stglv->height)
             continue;
-        st = stg->streams[lcevc->el_index];
-        lcevc->width  = st->codecpar->width;
-        lcevc->height = st->codecpar->height;
+        av_assert0(stge->type == AV_STREAM_GROUP_ENTRY_STREAM);
+        stglv->width  = stge->stream->codecpar->width;
+        stglv->height = stge->stream->codecpar->height;
     }
 
 find_stream_info_err:
@@ -3203,7 +3274,7 @@ find_stream_info_err:
         }
 
         if (avcodec_is_open(sti->avctx)) {
-            err = codec_close(sti);
+            err = codec_close(ic, sti);
             if (err < 0 && ret >= 0)
                 ret = err;
         }

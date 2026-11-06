@@ -538,8 +538,9 @@ refcmp_metadata(){
     refcmp=$1
     pixfmt=$2
     fuzz=${3:-0.001}
+    filter=${4:-avgblur=4}
     ffmpeg -auto_conversion_filters $FLAGS $ENC_OPTS \
-        -lavfi "testsrc2=size=300x200:rate=1:duration=5,format=${pixfmt},split[ref][tmp];[tmp]avgblur=4[enc];[enc][ref]${refcmp},metadata=print:file=-" \
+        -lavfi "testsrc2=size=300x200:rate=1:duration=5,format=${pixfmt},split[ref][tmp];[tmp]${filter}[enc];[enc][ref]${refcmp},metadata=print:file=-" \
         -f null /dev/null | awk -v ref=${ref} -v fuzz=${fuzz} -f ${base}/refcmp-metadata.awk -
 }
 
@@ -737,6 +738,31 @@ concat(){
     fi
 }
 
+seek_concat(){
+    template=$1
+    sample=$2
+    shift 2
+
+    concatfile="${outdir}/${test}.ffconcat"
+    cleanfiles="$cleanfiles $concatfile"
+
+    awk "{gsub(/%SRCFILE%/, \"$sample\"); print}" $template > $concatfile
+    run libavformat/tests/seek${EXECSUF} $(target_path $concatfile) -safe 0 "$@"
+}
+
+seek_staggered(){
+    sample=$1
+    offset=$2
+    shift 2
+
+    file="${outdir}/${test}.mov"
+    cleanfiles="$cleanfiles $file"
+
+    ffmpeg -i $sample -itsoffset $offset -i $sample -map 0:a -map 1:a -c copy \
+        -fflags +bitexact -f mov -y $(target_path $file) || return
+    run libavformat/tests/seek${EXECSUF} $(target_path $file) "$@"
+}
+
 venc_data(){
     file=$1
     stream=$2
@@ -763,6 +789,9 @@ null(){
 # Disable globbing: command arguments may contain globbing characters and
 # must be kept verbatim
 set -f
+
+# A pipeline fails when any of its commands fails, if the shell supports it
+(set -o pipefail) 2>/dev/null && set -o pipefail
 
 exec 3>&2
 eval $command >"$outfile" 2>$errfile

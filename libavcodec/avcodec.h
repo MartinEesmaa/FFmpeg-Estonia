@@ -578,8 +578,9 @@ typedef struct AVCodecContext {
      *   For encoding, this field is unused (see initial_padding).
      *
      *   For decoding, this is the number of samples the decoder needs to
-     *   output before the decoder's output is valid. When seeking, you should
-     *   start decoding this many samples prior to your desired seek point.
+     *   output before the decoder's output is valid. They are discarded when
+     *   the decoder is opened. When seeking, start decoding seek_preroll
+     *   samples prior to the desired seek point instead.
      *
      * - encoding: Set by libavcodec.
      * - decoding: Set by libavcodec.
@@ -1126,7 +1127,8 @@ typedef struct AVCodecContext {
 
     /**
      * Number of samples to skip after a discontinuity
-     * - decoding: unused
+     * - decoding: may be set by the user, a decoder may raise it to the
+     *             pre-roll it needs
      * - encoding: set by libavcodec
      */
     int seek_preroll;
@@ -2817,7 +2819,9 @@ AVCodecParserContext *av_parser_init(enum AVCodecID codec_id);
  * @param buf_size      buffer size in bytes without the padding. I.e. the full buffer
                         size is assumed to be buf_size + AV_INPUT_BUFFER_PADDING_SIZE.
                         To signal EOF, this should be 0 (so that the last frame
-                        can be output).
+                        can be output). After EOF has been signaled, only
+                        further calls with buf_size 0 are allowed; to parse
+                        new data, close the parser and allocate a new one.
  * @param pts           input presentation timestamp.
  * @param dts           input decoding timestamp.
  * @param pos           input byte position in stream.

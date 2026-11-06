@@ -153,6 +153,12 @@ static int preload_sofa(AVFilterContext *ctx, char *filename, int *samplingrate)
         return ret;
     }
 
+    if (!mysofa->N || !mysofa->M || mysofa->DataIR.elements / mysofa->M / mysofa->R < mysofa->N ||
+        (mysofa->DataDelay.elements != mysofa->R && mysofa->DataDelay.elements / mysofa->R < mysofa->M)) {
+        av_log(ctx, AV_LOG_ERROR, "Selected SOFA file has inconsistent dimensions.\n");
+        return AVERROR_INVALIDDATA;
+    }
+
     if (s->normalize)
         mysofa_loudness(s->sofa.hrtf);
 

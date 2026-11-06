@@ -106,7 +106,12 @@ static int write_header(AVFormatContext *s)
                              && !av_strcasecmp(str + 1, "y")
                              && s->nb_streams == 1
                              && desc
-                             &&(desc->flags & AV_PIX_FMT_FLAG_PLANAR)
+                            /* Semi-planar formats such as NV12 keep several
+                             * components in one plane, so splitting per
+                             * component needs one plane per component.
+                             */
+                             && av_pix_fmt_count_planes(st->codecpar->format)
+                                == desc->nb_components
                              && desc->nb_components >= 3;
     }
     img->img_number = img->start_img_number;
@@ -279,13 +284,15 @@ static int write_packet(AVFormatContext *s, AVPacket *pkt)
     av_bprint_finalize(&filename, NULL);
 
     if (img->split_planes) {
-        int ysize = par->width * par->height;
-        int usize = AV_CEIL_RSHIFT(par->width, desc->log2_chroma_w) * AV_CEIL_RSHIFT(par->height, desc->log2_chroma_h);
+        int64_t ysize = (int64_t)par->width * par->height;
+        int64_t usize = (int64_t)AV_CEIL_RSHIFT(par->width, desc->log2_chroma_w) * AV_CEIL_RSHIFT(par->height, desc->log2_chroma_h);
         if (desc->comp[0].depth >= 9) {
             ysize *= 2;
             usize *= 2;
         }
-        if (ysize + 2*usize + (desc->nb_components > 3) * ysize > pkt->size) {
+        if (par->width <= 0 || par->height <= 0 ||
+            ysize > pkt->size ||
+            ysize + 2*usize + (desc->nb_components > 3) * ysize > pkt->size) {
             ret = AVERROR(EINVAL);
             goto fail;
         }

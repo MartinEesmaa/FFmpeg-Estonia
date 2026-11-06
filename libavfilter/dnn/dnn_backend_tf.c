@@ -44,6 +44,7 @@ typedef struct TFModel {
     SafeQueue *request_queue;
     Queue *lltask_queue;
     Queue *task_queue;
+    int nb_requests;
 } TFModel;
 
 /**
@@ -140,15 +141,20 @@ static TFInferRequest *tf_create_inference_request(void)
 static int tf_start_inference(void *args)
 {
     TFRequestItem *request = args;
-    TFInferRequest *infer_request = request->infer_request;
-    LastLevelTaskItem *lltask = request->lltask;
-    TaskItem *task = lltask->task;
-    TFModel *tf_model = task->model;
+    TFInferRequest *infer_request;
+    LastLevelTaskItem *lltask;
+    TaskItem *task;
+    TFModel *tf_model;
 
     if (!request) {
-        av_log(tf_model->ctx, AV_LOG_ERROR, "TFRequestItem is NULL\n");
+        av_log(NULL, AV_LOG_ERROR, "TFRequestItem is NULL\n");
         return AVERROR(EINVAL);
     }
+
+    infer_request = request->infer_request;
+    lltask = request->lltask;
+    task = lltask->task;
+    tf_model = task->model;
 
     TF_SessionRun(tf_model->session, NULL,
                   infer_request->tf_input, &infer_request->input_tensor, 1,
@@ -315,7 +321,7 @@ static int get_output_tf(DNNModel *model, const char *input_name, int input_widt
     int ret;
     TFModel *tf_model = (TFModel *)model;
     DnnContext *ctx = tf_model->ctx;
-    TaskItem task;
+    TaskItem task = { 0 };
     TFRequestItem *request;
     DNNExecBaseParams exec_params = {
         .input_name     = input_name,
@@ -486,7 +492,7 @@ static void dnn_free_model_tf(DNNModel **model)
         return;
 
     tf_model = (TFModel *)(*model);
-    ff_dnn_wait_requests(tf_model->request_queue, tf_model->ctx->nireq);
+    ff_dnn_wait_requests(tf_model->request_queue, tf_model->nb_requests);
     while (ff_safe_queue_size(tf_model->request_queue) != 0) {
         TFRequestItem *item = ff_safe_queue_pop_front(tf_model->request_queue);
         destroy_request_item(&item);
@@ -567,6 +573,7 @@ static DNNModel *dnn_load_model_tf(DnnContext *ctx, DNNFunctionType func_type, A
             destroy_request_item(&item);
             goto err;
         }
+        tf_model->nb_requests++;
     }
 
     tf_model->lltask_queue = ff_queue_create();
@@ -741,6 +748,7 @@ static void infer_completion_callback(void *args) {
 err:
     tf_free_request(infer_request);
     av_freep(&outputs);
+    av_freep(&request->lltask);
 
     if (ff_safe_queue_push_back(tf_model->request_queue, request) < 0) {
         destroy_request_item(&request);
@@ -787,6 +795,7 @@ static int execute_model_tf(TFRequestItem *request, Queue *lltask_queue)
     }
 err:
     tf_free_request(request->infer_request);
+    av_freep(&request->lltask);
     if (ff_safe_queue_push_back(tf_model->request_queue, request) < 0) {
         destroy_request_item(&request);
     }
@@ -867,6 +876,7 @@ static int dnn_flush_tf(const DNNModel *model)
     ret = fill_model_input_tf(tf_model, request);
     if (ret != 0) {
         av_log(ctx, AV_LOG_ERROR, "Failed to fill model input.\n");
+        av_freep(&request->lltask);
         if (ff_safe_queue_push_back(tf_model->request_queue, request) < 0) {
             destroy_request_item(&request);
         }

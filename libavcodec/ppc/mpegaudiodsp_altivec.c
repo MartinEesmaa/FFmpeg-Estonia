@@ -23,14 +23,12 @@
 
 #include "config.h"
 #include "libavutil/attributes.h"
-#include "libavutil/cpu.h"
 #include "libavutil/internal.h"
 #include "libavutil/mem_internal.h"
-#include "libavutil/ppc/cpu.h"
 #include "libavutil/ppc/util_altivec.h"
 #include "libavcodec/mpegaudiodsp.h"
 
-#if HAVE_ALTIVEC
+#include "mpegaudiodsp_altivec.h"
 
 #define MACS(rt, ra, rb) rt+=(ra)*(rb)
 #define MLSS(rt, ra, rb) rt-=(ra)*(rb)
@@ -131,14 +129,7 @@ static void apply_window_mp3(float *in, float *win, int *unused, float *out,
     *out = sum;
 }
 
-#endif /* HAVE_ALTIVEC */
-
-av_cold void ff_mpadsp_init_ppc(MPADSPContext *s)
+av_cold void ff_mpadsp_init_altivec(MPADSPContext *s)
 {
-#if HAVE_ALTIVEC
-    if (!PPC_ALTIVEC(av_get_cpu_flags()))
-        return;
-
     s->apply_window_float = apply_window_mp3;
-#endif /* HAVE_ALTIVEC */
 }

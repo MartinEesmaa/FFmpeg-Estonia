@@ -514,6 +514,9 @@ static const struct FFVkFormatEntry {
     { VK_FORMAT_R16_SFLOAT, AV_PIX_FMT_GBRPF16,  VK_IMAGE_ASPECT_COLOR_BIT, 3, 3, 3, { VK_FORMAT_R16_SFLOAT,  VK_FORMAT_R16_SFLOAT,  VK_FORMAT_R16_SFLOAT  } },
     { VK_FORMAT_R32_SFLOAT, AV_PIX_FMT_GBRPF32,  VK_IMAGE_ASPECT_COLOR_BIT, 3, 3, 3, { VK_FORMAT_R32_SFLOAT, VK_FORMAT_R32_SFLOAT, VK_FORMAT_R32_SFLOAT } },
 
+    /* XYZ */
+    { VK_FORMAT_R16_UNORM,  AV_PIX_FMT_XYZP12,   VK_IMAGE_ASPECT_COLOR_BIT, 3, 3, 3, { VK_FORMAT_R16_UNORM,  VK_FORMAT_R16_UNORM,  VK_FORMAT_R16_UNORM  } },
+
     /* Planar RGB + Alpha */
     { VK_FORMAT_R8_UNORM,   AV_PIX_FMT_GBRAP,    VK_IMAGE_ASPECT_COLOR_BIT, 4, 4, 4, { VK_FORMAT_R8_UNORM,   VK_FORMAT_R8_UNORM,   VK_FORMAT_R8_UNORM,   VK_FORMAT_R8_UNORM   } },
     { VK_FORMAT_R16_UNORM,  AV_PIX_FMT_GBRAP10,  VK_IMAGE_ASPECT_COLOR_BIT, 4, 4, 4, { VK_FORMAT_R16_UNORM,  VK_FORMAT_R16_UNORM,  VK_FORMAT_R16_UNORM,  VK_FORMAT_R16_UNORM  } },
@@ -2641,8 +2644,10 @@ static int switch_layout(AVHWFramesContext *hwfc, FFVkExecPool *ectx,
     if (err < 0)
         return err;
 
+    /* NONE does not block any stage, so this queue's layout transition
+     * races a decode write submitted on the video queue. */
     err = ff_vk_exec_add_dep_frame(&p->vkctx, exec, &tmp_frame,
-                                   VK_PIPELINE_STAGE_2_NONE,
+                                   VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                                    VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT);
     if (err < 0)
         return err;
@@ -3917,8 +3922,13 @@ static int vulkan_map_from_drm_frame_sync(AVHWFramesContext *hwfc, AVFrame *dst,
                                     drm_sync_sem, desc->nb_objects,
                                     VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 1);
 
+        /* The imported DRM sync file only orders the external data, not this
+         * frame's earlier use by FFmpeg. The frame may be recycled from the
+         * pool while it is still in flight (and last used on another queue),
+         * so the map waits on its last signal, at ALL_COMMANDS, to be ordered
+         * after that previous use. */
         err = ff_vk_exec_add_dep_frame(&p->vkctx, exec, dst,
-                                       VK_PIPELINE_STAGE_2_NONE,
+                                       VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                                        VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT);
         if (err < 0) {
             ff_vk_exec_discard(&p->vkctx, exec);
@@ -4715,6 +4725,15 @@ static int copy_buffer_data(AVHWFramesContext *hwfc, FFVkBuffer *vkbuf,
 {
     int err;
     VulkanDevicePriv *p = hwfc->device_ctx->hwctx;
+    int bytewidth[AV_NUM_DATA_POINTERS];
+
+    /* Copy only the visible bytes of each row, the last row of a plane
+     * does not have to extend to the full linesize. */
+    for (int i = 0; i < planes; i++) {
+        bytewidth[i] = av_image_get_linesize(swf->format, swf->width, i);
+        if (bytewidth[i] < 0)
+            return bytewidth[i];
+    }
 
     if (upload) {
         for (int i = 0; i < planes; i++)
@@ -4722,7 +4741,7 @@ static int copy_buffer_data(AVHWFramesContext *hwfc, FFVkBuffer *vkbuf,
                                 region[i].bufferRowLength,
                                 swf->data[i],
                                 swf->linesize[i],
-                                FFABS(swf->linesize[i]),
+                                bytewidth[i],
                                 region[i].imageExtent.height);
 
         err = ff_vk_flush_buffer(&p->vkctx, vkbuf, 0, VK_WHOLE_SIZE, 1);
@@ -4744,7 +4763,7 @@ static int copy_buffer_data(AVHWFramesContext *hwfc, FFVkBuffer *vkbuf,
                                 swf->linesize[i],
                                 vkbuf->mapped_mem + region[i].bufferOffset,
                                 region[i].bufferRowLength,
-                                FFABS(swf->linesize[i]),
+                                bytewidth[i],
                                 region[i].imageExtent.height);
     }
 

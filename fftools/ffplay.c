@@ -58,6 +58,8 @@
 #include <SDL_thread.h>
 
 #include "cmdutils.h"
+#include "ffplay_dir.h"
+#include "ffplay_list.h"
 #include "ffplay_renderer.h"
 #include "opt_common.h"
 
@@ -105,39 +107,6 @@ const int program_birth_year = 2003;
 #define SAMPLE_ARRAY_SIZE (8 * 65536)
 
 #define CURSOR_HIDE_DELAY 1000000
-
-#define CHAPTER_LIST_FADE_TIME   250000
-#define CHAPTER_LIST_HOLD_TIME   500000
-#define CHAPTER_LIST_ROWS        7
-
-enum {
-    CHAPTER_SORT_NUMBER,
-    CHAPTER_SORT_ARTIST,
-    CHAPTER_SORT_TITLE,
-    CHAPTER_SORT_LENGTH,
-    CHAPTER_SORT_SHUFFLE,
-    CHAPTER_SORT_NB
-};
-
-typedef struct ChapterSortKey {
-    int key;
-    int descending;
-} ChapterSortKey;
-
-typedef struct ChapterRow {
-    int index;
-    const char *artist;
-    const char *title;
-    int64_t length;
-} ChapterRow;
-
-/* what lies under a window position: the row and the sort button, -1 for none, and whether it is inside the list at all */
-typedef struct ChapterListHit {
-    int inside;
-    int row;
-    int button;
-    int detail;
-} ChapterListHit;
 
 #define USE_ONEPASS_SUBTITLE_RENDER 1
 
@@ -309,7 +278,7 @@ typedef struct VideoState {
     int frame_drops_late;
 
     enum ShowMode {
-        SHOW_MODE_NONE = -1, SHOW_MODE_VIDEO = 0, SHOW_MODE_WAVES, SHOW_MODE_RDFT, SHOW_MODE_NB
+        SHOW_MODE_NONE = -1, SHOW_MODE_VIDEO = 0, SHOW_MODE_WAVES, SHOW_MODE_RDFT, SHOW_MODE_PHASE, SHOW_MODE_NB
     } show_mode;
     int16_t sample_array[SAMPLE_ARRAY_SIZE];
     int sample_array_index;
@@ -325,23 +294,8 @@ typedef struct VideoState {
     SDL_Texture *vis_texture;
     SDL_Texture *sub_texture;
     SDL_Texture *vid_texture;
-    SDL_Texture *chapter_texture;
-    SDL_Rect chapter_rect;
-    AVFilterGraph *chapter_graph;
-    AVFilterContext *chapter_sink;
-    ChapterRow *chapter_rows;
-    int nb_chapter_rows;
-    char chapter_search[64];
-    int chapter_selected;
-    int chapter_playing;
-    int chapter_mouse_x, chapter_mouse_y;
-    ChapterListHit chapter_hover;
-    int chapter_render_pending;
-    int chapter_pinned;
-    int chapter_pin_requested;
-    int64_t chapter_fade_start;
-    int64_t chapter_last_input;
-    double chapter_drawn_alpha;
+    SDL_AudioDeviceID audio_dev;
+    int64_t audio_callback_time;
 
     int subtitle_stream;
     AVStream *subtitle_st;
@@ -358,6 +312,12 @@ typedef struct VideoState {
     int eof;
 
     char *filename;
+    int id;
+    SDL_atomic_t replacement;
+    char *title;
+    int seek_by_bytes;
+    int infinite_buffer;
+    int loop;
     int width, height, xleft, ytop;
     int step;
 
@@ -408,16 +368,32 @@ static int loop = 1;
 static int framedrop = -1;
 static int infinite_buffer = -1;
 static enum ShowMode show_mode = SHOW_MODE_NONE;
-/* the columns the chapter list is sorted by, the most recently clicked first */
-static ChapterSortKey chapter_sort[CHAPTER_SORT_NB] = { { CHAPTER_SORT_NUMBER }, { CHAPTER_SORT_ARTIST }, { CHAPTER_SORT_TITLE },
-                                                        { CHAPTER_SORT_LENGTH }, { CHAPTER_SORT_SHUFFLE } };
-static int chapter_shuffle_seed;
 static const char *audio_codec_name;
 static const char *subtitle_codec_name;
 static const char *video_codec_name;
 double rdftspeed = 0.02;
 static int64_t cursor_last_shown;
 static int cursor_hidden = 0;
+static ListView *list;
+/* the key that pins the list when it is released, 0 for none */
+static SDL_Keycode list_key;
+/* whether the list shows the files of dir_list rather than the chapters of the stream playing */
+static int list_shows_files;
+static DirList *dir_list;
+/* the directory dir_thread reads, taken over by the event loop once done is set */
+static struct {
+    char *path;
+    AVDictionary *options;
+    int play_if_no_dir;
+    int cancelled;
+    SDL_atomic_t abort;
+    DirList *dl;
+    int ret;
+    SDL_atomic_t done;
+} dir_request;
+static SDL_Thread *dir_thread;
+/* the stream chosen in the file list, paused until it can play and replace the one playing */
+static VideoState *next_stream;
 static const char **vfilters_list = NULL;
 static int nb_vfilters = 0;
 static char *afilters = NULL;
@@ -431,9 +407,12 @@ static const char *hwaccel = NULL;
 
 /* current context */
 static int is_full_screen;
-static int64_t audio_callback_time;
 
 #define FF_QUIT_EVENT    (SDL_USEREVENT + 2)
+/* a stream has a picture to show, has no video, no picture before the end of its video, or no room to buffer more */
+#define FF_READY_EVENT   (SDL_USEREVENT + 3)
+
+static int last_stream_id;
 
 static volatile sig_atomic_t received_sigterm = 0;
 static volatile int received_nb_signals = 0;
@@ -441,8 +420,8 @@ static int exit_status = 0;
 
 static SDL_Window *window;
 static SDL_Renderer *renderer;
+static int wait_for_events;
 static SDL_RendererInfo renderer_info = {0};
-static SDL_AudioDeviceID audio_dev;
 
 static VkRenderer *vk_renderer;
 
@@ -653,6 +632,7 @@ static int decoder_init(Decoder *d, AVCodecContext *avctx, PacketQueue *queue, S
     d->empty_queue_cond = empty_queue_cond;
     d->start_pts = AV_NOPTS_VALUE;
     d->pkt_serial = -1;
+    packet_queue_start(d->queue);
     return 0;
 }
 
@@ -1081,521 +1061,44 @@ static void draw_video_background(VideoState *is)
 }
 
 static int current_chapter(VideoState *is);
+static void file_list_listed(VideoState *is);
 static void seek_chapter(VideoState *is, int i);
-
-static double chapter_list_alpha(VideoState *is, int64_t now)
-{
-    double alpha = (now - is->chapter_fade_start) / (double)CHAPTER_LIST_FADE_TIME;
-
-    if (!is->chapter_texture)
-        return 0;
-    if (!is->chapter_pinned)
-        alpha = FFMIN(alpha, 1 - (now - is->chapter_last_input - CHAPTER_LIST_HOLD_TIME) / (double)CHAPTER_LIST_FADE_TIME);
-    return av_clipd(alpha, 0, 1);
-}
 
 static const char *chapter_tag(const AVChapter *chapter, const char *key)
 {
     const AVDictionaryEntry *tag = av_dict_get(chapter->metadata, key, NULL, 0);
 
-    return tag ? tag->value : "";
+    return tag ? tag->value : NULL;
 }
 
-/* case-insensitive, with missing tags after all others */
-static int compare_tags(const char *a, const char *b)
+/* shows the chapter list with the chapter selected, or with the selection kept when no row shows it */
+static int chapter_list_show(VideoState *is, int chapter)
 {
-    return !*a != !*b ? !*a - !*b : av_strcasecmp(a, b);
-}
-
-/* the rank of a chapter in the shuffled order for the current seed */
-static uint32_t shuffle_rank(int index)
-{
-    uint32_t rank = (index + 1) * 0x9E3779B1u ^ chapter_shuffle_seed * 0x85EBCA77u;
-
-    rank ^= rank >> 15;
-    rank *= 0x2C1B3C6Du;
-    return rank ^ rank >> 12;
-}
-
-static int compare_chapter_rows(const void *a, const void *b)
-{
-    const ChapterRow *ra = a, *rb = b;
-
-    for (int i = 0; i < CHAPTER_SORT_NB; i++) {
-        int cmp;
-
-        switch (chapter_sort[i].key) {
-        case CHAPTER_SORT_ARTIST: cmp = compare_tags(ra->artist, rb->artist); break;
-        case CHAPTER_SORT_TITLE:  cmp = compare_tags(ra->title, rb->title);   break;
-        case CHAPTER_SORT_LENGTH: cmp = FFDIFFSIGN(ra->length, rb->length);   break;
-        case CHAPTER_SORT_SHUFFLE: cmp = FFDIFFSIGN(shuffle_rank(ra->index), shuffle_rank(rb->index)); break;
-        default:                  cmp = ra->index - rb->index;                break;
-        }
-        if (cmp)
-            return chapter_sort[i].descending ? -cmp : cmp;
-    }
-    return 0;
-}
-
-/* a column clicked again flips its order, any other becomes the first key ahead of the previous ones;
- * the shuffle button instead steps its seed by the side it was clicked on */
-static void chapter_sort_by(int key, int seed_step)
-{
-    int i = 0;
-
-    while (chapter_sort[i].key != key)
-        i++;
-    if (key == CHAPTER_SORT_SHUFFLE)
-        chapter_shuffle_seed += seed_step;
-    else if (i == 0)
-        chapter_sort[0].descending ^= 1;
-    if (i == 0)
-        return;
-    memmove(&chapter_sort[1], &chapter_sort[0], i * sizeof(*chapter_sort));
-    chapter_sort[0] = (ChapterSortKey){ key, 0 };
-}
-
-/* rebuilds the rows matching the search in the current sort order, keeping the selected chapter selected */
-static int chapter_list_update_rows(VideoState *is)
-{
-    int selected = is->nb_chapter_rows ? is->chapter_rows[is->chapter_selected].index : 0;
-    ChapterRow *rows = av_realloc_array(is->chapter_rows, is->ic->nb_chapters, sizeof(*rows));
-
-    if (!rows)
-        return AVERROR(ENOMEM);
-    is->chapter_rows    = rows;
-    is->nb_chapter_rows = 0;
-    for (int i = 0; i < is->ic->nb_chapters; i++) {
-        AVChapter *chapter = is->ic->chapters[i];
-        ChapterRow row = { i, chapter_tag(chapter, "artist"), chapter_tag(chapter, "title"), -1 };
-
-        if (chapter->end != AV_NOPTS_VALUE && chapter->end > chapter->start &&
-            (uint64_t)chapter->end - chapter->start <= INT64_MAX)
-            row.length = av_rescale_q(chapter->end - chapter->start, chapter->time_base, AV_TIME_BASE_Q);
-        if (av_stristr(row.artist, is->chapter_search) || av_stristr(row.title, is->chapter_search))
-            is->chapter_rows[is->nb_chapter_rows++] = row;
-    }
-    qsort(is->chapter_rows, is->nb_chapter_rows, sizeof(*is->chapter_rows), compare_chapter_rows);
-    is->chapter_selected = 0;
-    for (int row = 0; row < is->nb_chapter_rows; row++)
-        if (is->chapter_rows[row].index == selected)
-            is->chapter_selected = row;
-    return 0;
-}
-
-static const struct {
-    const char *label;
-    int width;
-} sort_buttons[CHAPTER_SORT_NB] = {
-    [CHAPTER_SORT_NUMBER] = { "#",      5 },
-    [CHAPTER_SORT_ARTIST] = { "Artist", 8 },
-    [CHAPTER_SORT_TITLE]  = { "Title",  7 },
-    [CHAPTER_SORT_LENGTH] = { "Duration", 10 },
-    [CHAPTER_SORT_SHUFFLE] = { "Shuffle", 14 },
-};
-
-#define CHAPTER_LIST_EVENT "Dialogue: 0:00:00.00,9999:00:00.00,"
-
-static void bprint_chapter_box(AVBPrint *script, const char *style, int x, int y, int w, int h)
-{
-    av_bprintf(script, CHAPTER_LIST_EVENT "%s,{\\pos(%d,%d)\\p1}m 0 0 l %d 0 %d %d 0 %d{\\p0}\n", style, x, y, w, w, h, h);
-}
-
-/* a text cell cut off at the right and bottom of its column, with the characters libass would read as tags or line breaks blanked */
-static void bprint_chapter_cell(AVBPrint *script, const char *style, int x, int y, int right, int bottom, const char *text)
-{
-    av_bprintf(script, CHAPTER_LIST_EVENT "%s,{\\pos(%d,%d)\\clip(0,0,%d,%d)}", style, x, y, right, bottom);
-    for (; *text; text++)
-        av_bprint_chars(script, strchr("{}\\\r\n", *text) ? ' ' : *text, 1);
-    av_bprint_chars(script, '\n', 1);
-}
-
-typedef struct ChapterListLayout {
-    int font, line, width, height, canvas_h, nb_rows, first;
-    int button_x[CHAPTER_SORT_NB], button_y[CHAPTER_SORT_NB];
-    int search_x, search_y, rows_y, text_x, text_right, length_x, detail_x, canvas_w;
-} ChapterListLayout;
-
-/* button widths are in half font sizes, a quarter apart, wrapping onto further lines when the panel is too narrow */
-static ChapterListLayout chapter_list_layout(VideoState *is)
-{
-    ChapterListLayout l;
-    int x, y;
-
-    l.font       = FFMAX(is->height / 30, 12);
-    l.line       = l.font * 9 / 4;
-    l.width      = FFMIN(FFMAX(is->width * 3 / 5, l.font * 26), is->width - l.font * 2);
-    x = y = l.font / 2;
-    for (int b = 0; b < CHAPTER_SORT_NB; b++) {
-        int w = sort_buttons[b].width * l.font / 2;
-
-        if (x > l.font / 2 && x + w > l.width - l.font / 2) {
-            x  = l.font / 2;
-            y += l.font * 3 / 2;
-        }
-        l.button_x[b] = x;
-        l.button_y[b] = y;
-        x += w + l.font / 4;
-    }
-    /* the search field follows the buttons, or takes its own line when they leave it less than 8 em */
-    if (x + l.font * 8 > l.width - l.font / 2) {
-        x  = l.font / 2;
-        y += l.font * 3 / 2;
-    }
-    l.search_x   = x;
-    l.search_y   = y;
-    l.rows_y     = is->chapter_pinned ? y + l.font * 3 / 2 : l.button_y[CHAPTER_SORT_NB - 1] + l.font * 3 / 2;
-    l.canvas_h   = FFMIN(y + l.font * 2 + CHAPTER_LIST_ROWS * l.line, is->height - l.font * 2);
-    l.nb_rows    = FFMIN(is->nb_chapter_rows, FFMAX(1, (l.canvas_h - l.rows_y - l.font / 2) / l.line));
-    l.first      = av_clip(is->chapter_selected - l.nb_rows / 2, 0, is->nb_chapter_rows - l.nb_rows);
-    l.height     = l.rows_y + l.nb_rows * l.line + l.font / 2;
-    l.text_x     = l.font * 3;
-    l.text_right = l.width - l.font * 11 / 2;
-    l.length_x   = l.width - l.font * 5 / 2;
-    l.detail_x   = l.width - l.font * 5 / 4;
-    l.canvas_w   = is->width - l.font * 2;
-    return l;
-}
-
-static ChapterListHit chapter_list_hit(VideoState *is, const ChapterListLayout *l, int x, int y)
-{
-    ChapterListHit hit = { 0, -1, -1, 0 };
-    int line;
-
-    x -= l->font;
-    y -= l->font;
-    if (x < 0 || y < 0 || x >= l->width || y >= FFMIN(l->height, l->canvas_h))
-        return hit;
-    hit.inside = 1;
-    line = (y - l->rows_y) / l->line;
-    if (y >= l->rows_y && line < l->nb_rows) {
-        hit.row    = l->first + line;
-        hit.detail = x >= l->width - l->font * 2;
-    }
-    for (int b = 0; b < FF_ARRAY_ELEMS(sort_buttons); b++)
-        if (x >= l->button_x[b] && x < l->button_x[b] + sort_buttons[b].width * l->font / 2 &&
-            y >= l->button_y[b] && y < l->button_y[b] + l->font * 5 / 4)
-            hit.button = b;
-    return hit;
-}
-
-/* a circle outline drawn as four bezier arcs around a center */
-static void bprint_chapter_ring(AVBPrint *script, int cx, int cy, int r)
-{
-    int k = r * 552 / 1000;
-
-    av_bprintf(script, CHAPTER_LIST_EVENT "Ring,{\\an5\\pos(%d,%d)\\p1}m 0 %d b 0 %d %d 0 %d 0 b %d 0 %d %d %d %d "
-               "b %d %d %d %d %d %d b %d %d 0 %d 0 %d{\\p0}\n",
-               cx, cy, r, r - k, r - k, r, r + k, 2 * r, r - k, 2 * r, r, 2 * r, r + k, r + k, 2 * r, r, 2 * r,
-               r - k, 2 * r, r + k, r);
-}
-
-/* the metadata of the chapter whose symbol the mouse is over, as a popup beside the list or over its rows when the window is narrow */
-static void bprint_chapter_details(VideoState *is, AVBPrint *script, const ChapterListLayout *l)
-{
-    const AVChapter *chapter = is->ic->chapters[is->chapter_rows[is->chapter_hover.row].index];
-    const AVDictionaryEntry *tag = NULL;
-    int beside = l->canvas_w - l->width >= l->font * 12;
-    int height = FFMIN(av_dict_count(chapter->metadata) * l->font + l->font / 2, is->chapter_rect.h);
-    int x      = beside ? l->width + l->font / 2 : l->text_x;
-    int right  = beside ? l->canvas_w : l->length_x - l->font / 2;
-    int y = av_clip(l->rows_y + (is->chapter_hover.row - l->first) * l->line, 0, is->chapter_rect.h - height);
-
-    if (!av_dict_count(chapter->metadata))
-        return;
-    bprint_chapter_box(script, "Popup", x, y, right - x, height);
-    for (int i = 0; (tag = av_dict_iterate(chapter->metadata, tag)); i++) {
-        int line_y = y + l->font / 4 + i * l->font;
-
-        bprint_chapter_cell(script, "Detail", x + l->font / 2, line_y, x + l->font * 7, y + height, tag->key);
-        bprint_chapter_cell(script, "Detail", x + l->font * 15 / 2, line_y, right - l->font / 4, y + height, tag->value);
-    }
-}
-
-static void chapter_list_script(VideoState *is, AVBPrint *script)
-{
-    ChapterListLayout l = chapter_list_layout(is);
-
-    is->chapter_hover = chapter_list_hit(is, &l, is->chapter_mouse_x, is->chapter_mouse_y);
-    is->chapter_rect = (SDL_Rect){ l.font, l.font, l.canvas_w, l.canvas_h };
-    av_bprintf(script,
-               "[Script Info]\nScriptType: v4.00+\nPlayResX: %d\nPlayResY: %d\nWrapStyle: 2\nYCbCr Matrix: None\n\n"
-               "[V4+ Styles]\n"
-               "Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, Bold, Outline, Alignment\n"
-               "Style: Panel,Sans,%d,&H40000000,&H40000000,0,0,7\n"
-               "Style: Button,Sans,%d,&H80FFFFFF,&H80FFFFFF,0,0,7\n"
-               "Style: Row,Sans,%d,&H00FFFFFF,&H00000000,0,%d,7\n"
-               "Style: Selected,Sans,%d,&H0080D0FF,&H00000000,-1,%d,7\n"
-               "Style: Artist,Sans,%d,&H00C0C0C0,&H00000000,0,%d,7\n"
-               "Style: ArtistSelected,Sans,%d,&H0080D0FF,&H00000000,-1,%d,7\n"
-               "Style: Playing,Sans,%d,&H00FFFFFF,&H00FFFFFF,0,0,7\n"
-               "Style: Hint,Sans,%d,&H00A0A0A0,&H00000000,0,%d,7\n"
-               "Style: Hover,Sans,%d,&HC8FFFFFF,&HC8FFFFFF,0,0,7\n"
-               "Style: ButtonHover,Sans,%d,&H50FFFFFF,&H50FFFFFF,0,0,7\n"
-               "Style: Ring,Sans,%d,&HFF000000,&H00A0A0A0,0,%d,7\n"
-               "Style: Popup,Sans,%d,&H20000000,&H20000000,0,0,7\n"
-               "Style: Detail,Sans,%d,&H00FFFFFF,&H00000000,0,%d,7\n\n"
-               "[Events]\nFormat: Start, End, Style, Text\n",
-               is->chapter_rect.w, is->chapter_rect.h, l.font, l.font, l.font, l.font / 16 + 1, l.font, l.font / 16 + 1,
-               l.font * 4 / 5, l.font / 16 + 1, l.font * 4 / 5, l.font / 16 + 1, l.font, l.font, l.font / 16 + 1, l.font, l.font,
-               l.font, l.font / 16 + 1, l.font, l.font * 4 / 5, l.font / 16 + 1);
-    bprint_chapter_box(script, "Panel", 0, 0, l.width, l.height);
-    if (is->chapter_pinned)
-        bprint_chapter_cell(script, *is->chapter_search ? "Row" : "Hint", l.search_x, l.search_y, l.length_x,
-                            l.search_y + l.font * 3 / 2, *is->chapter_search ? is->chapter_search : "type to search");
-    for (int b = 0; b < FF_ARRAY_ELEMS(sort_buttons); b++) {
-        int x = l.button_x[b], y = l.button_y[b], w = sort_buttons[b].width * l.font / 2;
-
-        bprint_chapter_box(script, b == is->chapter_hover.button ? "ButtonHover" : "Button", x, y, w, l.font * 5 / 4);
-        av_bprintf(script, CHAPTER_LIST_EVENT "%s,{\\an5\\pos(%d,%d)}", chapter_sort[0].key == b ? "Selected" : "Row",
-                   x + w / 2, y + l.font * 5 / 8);
-        if (b == CHAPTER_SORT_SHUFFLE)
-            av_bprintf(script, "\xe2\x97\x82 %s %d \xe2\x96\xb8\n", sort_buttons[b].label, chapter_shuffle_seed);
-        else
-            av_bprintf(script, "%s%s\n", sort_buttons[b].label,
-                       chapter_sort[0].key != b ? "" : chapter_sort[0].descending ? " \xe2\x96\xbc" : " \xe2\x96\xb2");
-    }
-    is->chapter_playing = current_chapter(is);
-    for (int r = l.first; r < l.first + l.nb_rows; r++) {
-        const ChapterRow *row = &is->chapter_rows[r];
-        const char *style = r == is->chapter_selected ? "Selected" : "Row";
-        int y = l.rows_y + (r - l.first) * l.line;
-        int64_t seconds;
-
-        if (r == is->chapter_hover.row)
-            bprint_chapter_box(script, "Hover", 0, y, l.width, l.line);
-        if (row->index == is->chapter_playing)
-            bprint_chapter_box(script, "Playing", 0, y, l.font / 6, l.line);
-        av_bprintf(script, CHAPTER_LIST_EVENT "%s,{\\an6\\pos(%d,%d)}%d\n", style, l.font * 5 / 2, y + l.line / 2, row->index + 1);
-        bprint_chapter_cell(script, style, l.text_x, y + l.font / 8, l.text_right, y + l.line, row->title);
-        bprint_chapter_cell(script, r == is->chapter_selected ? "ArtistSelected" : "Artist", l.text_x, y + l.font * 5 / 4,
-                            l.text_right, y + l.line, row->artist);
-        bprint_chapter_ring(script, l.detail_x, y + l.line / 2, l.font * 9 / 20);
-        av_bprintf(script, CHAPTER_LIST_EVENT "Hint,{\\an5\\pos(%d,%d)}i\n", l.detail_x, y + l.line / 2);
-        if (row->length < 0)
-            continue;
-        seconds = (row->length + AV_TIME_BASE / 2) / AV_TIME_BASE;
-        av_bprintf(script, CHAPTER_LIST_EVENT "%s,{\\an6\\pos(%d,%d)}", style, l.length_x, y + l.line / 2);
-        if (seconds >= 3600)
-            av_bprintf(script, "%d:%02d:%02d\n", (int)(seconds / 3600), (int)(seconds / 60 % 60), (int)(seconds % 60));
-        else
-            av_bprintf(script, "%d:%02d\n", (int)(seconds / 60), (int)(seconds % 60));
-    }
-    if (is->chapter_hover.detail)
-        bprint_chapter_details(is, script, &l);
-}
-
-static int chapter_list_configure(VideoState *is, const char *script)
-{
-    const AVFilter *ass_filter = avfilter_get_by_name("ass");
-    AVFilterContext *source, *ass;
-    char source_args[64];
+    ListEntry *entries = av_calloc(is->ic->nb_chapters, sizeof(*entries));
     int ret;
 
-    if (!ass_filter) {
-        static int reported;
+    if (!entries)
+        return AVERROR(ENOMEM);
+    for (int i = 0; i < is->ic->nb_chapters; i++) {
+        const AVChapter *ch = is->ic->chapters[i];
 
-        if (!reported++)
-            av_log(NULL, AV_LOG_ERROR, "The chapter list needs the ass filter, which this build lacks\n");
-        return AVERROR_FILTER_NOT_FOUND;
+        entries[i] = (ListEntry){ chapter_tag(ch, "title"), chapter_tag(ch, "artist"), -1, ch->metadata };
+        if (ch->end != AV_NOPTS_VALUE && ch->end > ch->start && (uint64_t)ch->end - ch->start <= INT64_MAX)
+            entries[i].length = av_rescale_q(ch->end - ch->start, ch->time_base, AV_TIME_BASE_Q);
     }
-    avfilter_graph_free(&is->chapter_graph);
-    if (!(is->chapter_graph = avfilter_graph_alloc()))
-        return AVERROR(ENOMEM);
-    snprintf(source_args, sizeof(source_args), "color=black@0:rate=1:size=%dx%d", is->chapter_rect.w, is->chapter_rect.h);
-    ass              = avfilter_graph_alloc_filter(is->chapter_graph, ass_filter, "ass");
-    is->chapter_sink = avfilter_graph_alloc_filter(is->chapter_graph, avfilter_get_by_name("buffersink"), "sink");
-    if (!ass || !is->chapter_sink)
-        return AVERROR(ENOMEM);
-    if ((ret = avfilter_graph_create_filter(&source, avfilter_get_by_name("color"), "source", source_args, NULL, is->chapter_graph)) < 0 ||
-        (ret = av_opt_set(ass, "script", script, AV_OPT_SEARCH_CHILDREN)) < 0 ||
-        (ret = av_opt_set_int(ass, "alpha", 1, AV_OPT_SEARCH_CHILDREN)) < 0 ||
-        (ret = avfilter_init_str(ass, NULL)) < 0 ||
-        (ret = av_opt_set_array(is->chapter_sink, "pixel_formats", AV_OPT_SEARCH_CHILDREN, 0, 1, AV_OPT_TYPE_PIXEL_FMT,
-                                &(enum AVPixelFormat){ AV_PIX_FMT_RGB32 })) < 0 ||
-        (ret = avfilter_init_str(is->chapter_sink, NULL)) < 0 ||
-        (ret = avfilter_link(source, 0, ass, 0)) < 0 ||
-        (ret = avfilter_link(ass, 0, is->chapter_sink, 0)) < 0)
-        return ret;
-    return avfilter_graph_config(is->chapter_graph, NULL);
-}
-
-static int chapter_list_render(VideoState *is)
-{
-    AVBPrint script;
-    AVFrame *frame = av_frame_alloc();
-    void *pixels;
-    int pitch, ret;
-
-    if (!frame)
-        return AVERROR(ENOMEM);
-    is->chapter_render_pending = 0;
-    av_bprint_init(&script, 0, AV_BPRINT_SIZE_UNLIMITED);
-    chapter_list_script(is, &script);
-    if (!av_bprint_is_complete(&script))
-        ret = AVERROR(ENOMEM);
-    else if (is->chapter_graph)
-        ret = avfilter_graph_send_command(is->chapter_graph, "ass", "script", script.str, NULL, 0, 0);
-    else
-        ret = chapter_list_configure(is, script.str);
+    if (list_shows_files)
+        list_view_clear(list);
+    ret = list_view_show(list, entries, is->ic->nb_chapters, chapter);
+    av_free(entries);
     if (ret >= 0)
-        ret = av_buffersink_get_frame(is->chapter_sink, frame);
-    if (ret >= 0 && (realloc_texture(&is->chapter_texture, SDL_PIXELFORMAT_ARGB8888, frame->width, frame->height, SDL_BLENDMODE_BLEND, 0) < 0 ||
-                     SDL_LockTexture(is->chapter_texture, NULL, &pixels, &pitch) < 0))
-        ret = AVERROR_EXTERNAL;
-    if (ret >= 0) {
-        int alpha = av_pix_fmt_desc_get(AV_PIX_FMT_RGB32)->comp[3].offset;
-
-        /* the ass filter composites onto the transparent canvas with premultiplied alpha, SDL blends straight alpha */
-        for (int y = 0; y < frame->height; y++) {
-            const uint8_t *src = frame->data[0] + y * frame->linesize[0];
-            uint8_t *dst = (uint8_t *)pixels + y * pitch;
-
-            for (int x = 0; x < frame->width * 4; x += 4)
-                for (int c = 0; c < 4; c++)
-                    dst[x + c] = c == alpha || !src[x + alpha] ? src[x + c] : FFMIN(src[x + c] * 255 / src[x + alpha], 255);
-        }
-        SDL_UnlockTexture(is->chapter_texture);
-        is->force_refresh = 1;
-    }
-    if (ret < 0) {
-        if (ret != AVERROR_FILTER_NOT_FOUND)
-            av_log(NULL, AV_LOG_ERROR, "Could not render the chapter list: %s\n", av_err2str(ret));
-        avfilter_graph_free(&is->chapter_graph);
-        if (is->chapter_texture)
-            SDL_DestroyTexture(is->chapter_texture);
-        is->chapter_texture = NULL;
-        is->chapter_pinned  = 0;
-        SDL_StopTextInput();
-    }
-    av_frame_free(&frame);
-    av_bprint_finalize(&script, NULL);
+        list_shows_files = 0;
     return ret;
 }
 
-/* shows the list with the chapter selected, or with the selection kept when no row shows it */
-static void chapter_list_show(VideoState *is, int chapter)
+static void chapter_list_pin(VideoState *is)
 {
-    int64_t now = av_gettime_relative();
-
-    if (!renderer || chapter_list_update_rows(is) < 0)
-        return;
-    for (int row = 0; row < is->nb_chapter_rows; row++)
-        if (is->chapter_rows[row].index == chapter)
-            is->chapter_selected = row;
-    is->chapter_fade_start = now - chapter_list_alpha(is, now) * CHAPTER_LIST_FADE_TIME;
-    is->chapter_last_input = now;
-    chapter_list_render(is);
-}
-
-static void chapter_list_move(VideoState *is, int delta)
-{
-    if (is->nb_chapter_rows)
-        chapter_list_show(is, is->chapter_rows[av_clip(is->chapter_selected + delta, 0, is->nb_chapter_rows - 1)].index);
-}
-
-static int chapter_list_visible(VideoState *is)
-{
-    return chapter_list_alpha(is, av_gettime_relative()) > 0;
-}
-
-/* appends the typed text to the search, or erases its last character when nothing was typed */
-static void chapter_list_search(VideoState *is, const char *typed)
-{
-    int len = strlen(is->chapter_search);
-
-    if (typed) {
-        if (len + strlen(typed) < sizeof(is->chapter_search))
-            av_strlcat(is->chapter_search, typed, sizeof(is->chapter_search));
-    } else if (len) {
-        while (len > 0 && (is->chapter_search[--len] & 0xC0) == 0x80)
-            ;
-        is->chapter_search[len] = 0;
-    }
-    chapter_list_update_rows(is);
-    chapter_list_render(is);
-}
-
-static void chapter_list_pin(VideoState *is, int pinned)
-{
-    if (!renderer)
-        return;
-    is->chapter_pinned = pinned;
-    if (pinned) {
-        chapter_list_show(is, current_chapter(is));
-        is->chapter_pinned = !!is->chapter_texture;
-        if (is->chapter_pinned)
-            SDL_StartTextInput();
-    } else {
-        SDL_StopTextInput();
-        is->chapter_last_input = av_gettime_relative() - CHAPTER_LIST_HOLD_TIME;
-        is->chapter_search[0] = 0;
-        chapter_list_update_rows(is);
-        chapter_list_render(is);
-    }
-}
-
-/* keys while the list is pinned; typed characters arrive as text input instead */
-static void chapter_list_key(VideoState *is, SDL_Keycode key)
-{
-    switch (key) {
-    case SDLK_ESCAPE:    chapter_list_pin(is, 0); break;
-    case SDLK_UP:        chapter_list_move(is, -1); break;
-    case SDLK_DOWN:      chapter_list_move(is, 1); break;
-    case SDLK_PAGEUP:    seek_chapter(is, current_chapter(is) + 1); break;
-    case SDLK_PAGEDOWN:  seek_chapter(is, current_chapter(is) - 1); break;
-    case SDLK_BACKSPACE: chapter_list_search(is, NULL); break;
-    case SDLK_RETURN:
-    case SDLK_KP_ENTER:
-        if (is->nb_chapter_rows)
-            seek_chapter(is, is->chapter_rows[is->chapter_selected].index);
-        break;
-    }
-}
-
-/* keeps the mouse position for the next render and asks for one when what a visible list points at changed;
- * the render waits until the pending events are handled, so a sweep across the list renders once */
-static void chapter_list_hover(VideoState *is, int x, int y)
-{
-    ChapterListLayout l;
-    ChapterListHit hit;
-
-    is->chapter_mouse_x = x;
-    is->chapter_mouse_y = y;
-    if (!chapter_list_visible(is))
-        return;
-    l   = chapter_list_layout(is);
-    hit = chapter_list_hit(is, &l, x, y);
-    if (hit.row != is->chapter_hover.row || hit.button != is->chapter_hover.button || hit.detail != is->chapter_hover.detail)
-        is->chapter_render_pending = 1;
-}
-
-/* seeks to the entry under a click or sorts by the button under it, returns whether the click hit the list at all */
-static int chapter_list_click(VideoState *is, int x, int y)
-{
-    ChapterListLayout l = chapter_list_layout(is);
-    ChapterListHit hit = chapter_list_hit(is, &l, x, y);
-
-    if (hit.row >= 0 && !hit.detail)
-        seek_chapter(is, is->chapter_rows[hit.row].index);
-    if (hit.button >= 0) {
-        int button_w = sort_buttons[hit.button].width * l.font / 2;
-
-        chapter_sort_by(hit.button, (x - l.font - l.button_x[hit.button]) * 2 < button_w ? -1 : 1);
-        chapter_list_show(is, -1);
-    }
-    return hit.inside;
-}
-
-static void chapter_list_draw(VideoState *is)
-{
-    double alpha = chapter_list_alpha(is, av_gettime_relative());
-
-    is->chapter_drawn_alpha = alpha;
-    if (alpha > 0 && is->chapter_texture) {
-        SDL_SetTextureAlphaMod(is->chapter_texture, alpha * 255);
-        SDL_RenderCopy(renderer, is->chapter_texture, NULL, &is->chapter_rect);
-    }
+    if (chapter_list_show(is, current_chapter(is)) >= 0)
+        list_view_pin(list, 1);
 }
 
 static void video_image_display(VideoState *is)
@@ -1716,8 +1219,8 @@ static void video_audio_display(VideoState *s)
 
         /* to be more precise, we take into account the time spent since
            the last buffer computation */
-        if (audio_callback_time) {
-            time_diff = av_gettime_relative() - audio_callback_time;
+        if (s->audio_callback_time) {
+            time_diff = av_gettime_relative() - s->audio_callback_time;
             delay -= (time_diff * s->audio_tgt.freq) / 1000000;
         }
 
@@ -1818,23 +1321,32 @@ static void video_audio_display(VideoState *s)
                         i -= SAMPLE_ARRAY_SIZE;
                 }
                 s->rdft_fn(s->rdft, data[ch], data_in[ch], sizeof(float));
-                data[ch][0].im = data[ch][nb_freq].re;
-                data[ch][nb_freq].re = 0;
             }
             /* Least efficient way to do this, we should of course
              * directly access it but it is more than fast enough. */
             if (!SDL_LockTexture(s->vis_texture, &rect, (void **)&pixels, &pitch)) {
+                double w = 1 / sqrt(nb_freq);
+                int show_phase = s->show_mode == SHOW_MODE_PHASE && nb_display_channels == 2;
                 pitch >>= 2;
                 pixels += pitch * s->height;
                 for (y = 0; y < s->height; y++) {
-                    double w = 1 / sqrt(nb_freq);
                     int a = sqrt(w * sqrt(data[0][y].re * data[0][y].re + data[0][y].im * data[0][y].im));
                     int b = (nb_display_channels == 2 ) ? sqrt(w * hypot(data[1][y].re, data[1][y].im))
                                                         : a;
                     a = FFMIN(a, 255);
                     b = FFMIN(b, 255);
+                    int blue = (a+b) >> 1;
+                    if (show_phase) {
+                        /* phase(left) - phase(right) in units of pi */
+                        double phase = atan2(data[0][y].im * data[1][y].re - data[0][y].re * data[1][y].im,
+                                             data[0][y].re * data[1][y].re + data[0][y].im * data[1][y].im) / M_PI;
+                        int phase_shift = lrint(phase * FFMIN(a, b));
+                        a    = FFMIN(a    - phase_shift / 2, 255);
+                        b    = FFMIN(b    - phase_shift / 2, 255);
+                        blue = FFMIN(blue + phase_shift,     255);
+                    }
                     pixels -= pitch;
-                    *pixels = (a << 16) + (b << 8) + ((a+b) >> 1);
+                    *pixels = (a << 16) + (b << 8) + blue;
                 }
                 SDL_UnlockTexture(s->vis_texture);
             }
@@ -1862,9 +1374,9 @@ static void uninit_bsf_graph(AVFormatContext *ic, int stream_index)
         av_bsf_graph_free(&stgi->graph);
         stgi->sink = NULL;
 
-        for (int i = 0; i < stgi->stg->nb_streams; i++) {
-            ici->streams[stgi->stg->streams[i]->index]->filter = NULL;
-            ici->streams[stgi->stg->streams[i]->index]->group = NULL;
+        for (int i = 0; i < stgi->stg->nb_entries; i++) {
+            ici->streams[stgi->stg->entries[i]->stream->index]->filter = NULL;
+            ici->streams[stgi->stg->entries[i]->stream->index]->group = NULL;
         }
     }
     sti->group = stgi;
@@ -1885,7 +1397,9 @@ static void stream_component_close(VideoState *is, int stream_index)
     switch (codecpar->codec_type) {
     case AVMEDIA_TYPE_AUDIO:
         decoder_abort(&is->auddec, &is->sampq);
-        SDL_CloseAudioDevice(audio_dev);
+        avfilter_graph_free(&is->agraph);
+        SDL_CloseAudioDevice(is->audio_dev);
+        is->audio_dev = 0;
         decoder_destroy(&is->auddec);
         swr_free(&is->swr_ctx);
         av_freep(&is->audio_buf1);
@@ -1969,16 +1483,13 @@ static void stream_close(VideoState *is)
     SDL_DestroyCond(is->continue_read_thread);
     sws_freeContext(is->sub_convert_ctx);
     av_free(is->filename);
+    av_free(is->title);
     if (is->vis_texture)
         SDL_DestroyTexture(is->vis_texture);
     if (is->vid_texture)
         SDL_DestroyTexture(is->vid_texture);
     if (is->sub_texture)
         SDL_DestroyTexture(is->sub_texture);
-    if (is->chapter_texture)
-        SDL_DestroyTexture(is->chapter_texture);
-    avfilter_graph_free(&is->chapter_graph);
-    av_freep(&is->chapter_rows);
     av_free(is);
 }
 
@@ -1987,6 +1498,22 @@ static void do_exit(VideoState *is)
     if (is) {
         stream_close(is);
     }
+    if (next_stream)
+        stream_close(next_stream);
+    SDL_AtomicSet(&dir_request.abort, 1);
+    for (int waited = 0; dir_thread && !SDL_AtomicGet(&dir_request.done) && waited < 2000; waited += 10)
+        SDL_Delay(10);
+    if (dir_thread && !SDL_AtomicGet(&dir_request.done)) {
+        /* a protocol that does not take the interrupt keeps the thread and its request until the process ends */
+        SDL_DetachThread(dir_thread);
+    } else {
+        if (dir_thread)
+            SDL_WaitThread(dir_thread, NULL);
+        dir_list_free(&dir_request.dl);
+        av_freep(&dir_request.path);
+        av_dict_free(&dir_request.options);
+    }
+    list_view_free(&list);
     if (renderer)
         SDL_DestroyRenderer(renderer);
     if (vk_renderer)
@@ -2001,6 +1528,7 @@ static void do_exit(VideoState *is)
     av_freep(&audio_codec_name);
     av_freep(&subtitle_codec_name);
     av_freep(&input_filename);
+    dir_list_free(&dir_list);
     avformat_network_deinit();
     if (show_status)
         printf("\n");
@@ -2035,9 +1563,7 @@ static int video_open(VideoState *is)
     w = screen_width ? screen_width : default_width;
     h = screen_height ? screen_height : default_height;
 
-    if (!window_title)
-        window_title = input_filename;
-    SDL_SetWindowTitle(window, window_title);
+    SDL_SetWindowTitle(window, window_title ? window_title : is->title ? is->title : is->filename);
 
     SDL_SetWindowSize(window, w, h);
     SDL_SetWindowPosition(window, screen_left, screen_top);
@@ -2047,6 +1573,7 @@ static int video_open(VideoState *is)
 
     is->width  = w;
     is->height = h;
+    list_view_set_size(list, w, h);
 
     return 0;
 }
@@ -2061,9 +1588,9 @@ static void video_display(VideoState *is)
     SDL_RenderClear(renderer);
     if (is->audio_st && is->show_mode != SHOW_MODE_VIDEO)
         video_audio_display(is);
-    else if (is->video_st)
+    else if (is->video_st && is->pictq.rindex_shown)
         video_image_display(is);
-    chapter_list_draw(is);
+    list_view_draw(list);
     SDL_RenderPresent(renderer);
 }
 
@@ -2381,7 +1908,7 @@ retry:
         }
 display:
         /* display picture */
-        if (!display_disable && is->force_refresh && is->show_mode == SHOW_MODE_VIDEO && is->pictq.rindex_shown)
+        if (!display_disable && is->force_refresh && is->show_mode == SHOW_MODE_VIDEO)
             video_display(is);
     }
     is->force_refresh = 0;
@@ -2846,7 +2373,6 @@ static int audio_thread(void *arg)
 
 static int decoder_start(Decoder *d, int (*fn)(void *), const char *thread_name, void* arg)
 {
-    packet_queue_start(d->queue);
     d->decoder_tid = SDL_CreateThread(fn, thread_name, arg);
     if (!d->decoder_tid) {
         av_log(NULL, AV_LOG_ERROR, "SDL_CreateThread(): %s\n", SDL_GetError());
@@ -2855,13 +2381,22 @@ static int decoder_start(Decoder *d, int (*fn)(void *), const char *thread_name,
     return 0;
 }
 
+/* pushes the event for the event loop, marked with the stream it comes from */
+static void push_stream_event(VideoState *is, Uint32 type)
+{
+    SDL_Event event = { .user = { .type = type, .code = is->id } };
+
+    if (SDL_PushEvent(&event) < 0)
+        av_log(NULL, AV_LOG_ERROR, "Could not push the event of '%s': %s\n", is->filename, SDL_GetError());
+}
+
 static int video_thread(void *arg)
 {
     VideoState *is = arg;
     AVFrame *frame = av_frame_alloc();
     double pts;
     double duration;
-    int ret;
+    int ret, announced = 0;
     AVRational tb = is->video_st->time_base;
     AVRational frame_rate = av_guess_frame_rate(is->ic, is->video_st, NULL);
 
@@ -2880,8 +2415,13 @@ static int video_thread(void *arg)
         ret = get_video_frame(is, frame);
         if (ret < 0)
             goto the_end;
-        if (!ret)
+        if (!ret) {
+            if (is->viddec.finished == is->viddec.pkt_serial && !announced) {
+                push_stream_event(is, FF_READY_EVENT);
+                announced = 1;
+            }
             continue;
+        }
 
         if (   last_w != frame->width
             || last_h != frame->height
@@ -2902,10 +2442,7 @@ static int video_thread(void *arg)
             }
             graph->nb_threads = filter_nbthreads;
             if ((ret = configure_video_filters(graph, is, vfilters_list ? vfilters_list[is->vfilter_idx] : NULL, frame)) < 0) {
-                SDL_Event event;
-                event.type = FF_QUIT_EVENT;
-                event.user.data1 = is;
-                SDL_PushEvent(&event);
+                push_stream_event(is, FF_QUIT_EVENT);
                 goto the_end;
             }
             filt_in  = is->in_video_filter;
@@ -2945,6 +2482,10 @@ static int video_thread(void *arg)
             pts = (frame->pts == AV_NOPTS_VALUE) ? NAN : frame->pts * av_q2d(tb);
             ret = queue_picture(is, frame, pts, duration, fd ? fd->pkt_pos : -1, is->viddec.pkt_serial);
             av_frame_unref(frame);
+            if (ret >= 0 && !announced) {
+                push_stream_event(is, FF_READY_EVENT);
+                announced = 1;
+            }
             if (is->videoq.serial != is->viddec.pkt_serial)
                 break;
         }
@@ -2953,6 +2494,8 @@ static int video_thread(void *arg)
             goto the_end;
     }
  the_end:
+    if (!announced && SDL_AtomicGet(&is->replacement))
+        push_stream_event(is, FF_QUIT_EVENT);
     avfilter_graph_free(&graph);
     av_frame_free(&frame);
     return 0;
@@ -3074,7 +2617,7 @@ static int audio_decode_frame(VideoState *is)
     do {
 #if defined(_WIN32)
         while (frame_queue_nb_remaining(&is->sampq) == 0) {
-            if ((av_gettime_relative() - audio_callback_time) > 1000000LL * is->audio_hw_buf_size / is->audio_tgt.bytes_per_sec / 2)
+            if ((av_gettime_relative() - is->audio_callback_time) > 1000000LL * is->audio_hw_buf_size / is->audio_tgt.bytes_per_sec / 2)
                 return -1;
             av_usleep (1000);
         }
@@ -3176,7 +2719,7 @@ static void sdl_audio_callback(void *opaque, Uint8 *stream, int len)
     VideoState *is = opaque;
     int audio_size, len1;
 
-    audio_callback_time = av_gettime_relative();
+    is->audio_callback_time = av_gettime_relative();
 
     while (len > 0) {
         if (is->audio_buf_index >= is->audio_buf_size) {
@@ -3209,12 +2752,12 @@ static void sdl_audio_callback(void *opaque, Uint8 *stream, int len)
     is->audio_write_buf_size = is->audio_buf_size - is->audio_buf_index;
     /* Let's assume the audio driver that is used by SDL has two periods. */
     if (!isnan(is->audio_clock)) {
-        set_clock_at(&is->audclk, is->audio_clock - (double)(2 * is->audio_hw_buf_size + is->audio_write_buf_size) / is->audio_tgt.bytes_per_sec, is->audio_clock_serial, audio_callback_time / 1000000.0);
+        set_clock_at(&is->audclk, is->audio_clock - (double)(2 * is->audio_hw_buf_size + is->audio_write_buf_size) / is->audio_tgt.bytes_per_sec, is->audio_clock_serial, is->audio_callback_time / 1000000.0);
         sync_clock_to_slave(&is->extclk, &is->audclk);
     }
 }
 
-static int audio_open(void *opaque, AVChannelLayout *wanted_channel_layout, int wanted_sample_rate, struct AudioParams *audio_hw_params)
+static int audio_open(VideoState *is, AVChannelLayout *wanted_channel_layout, int wanted_sample_rate, struct AudioParams *audio_hw_params)
 {
     SDL_AudioSpec wanted_spec, spec;
     const char *env;
@@ -3246,8 +2789,8 @@ static int audio_open(void *opaque, AVChannelLayout *wanted_channel_layout, int 
     wanted_spec.silence = 0;
     wanted_spec.samples = FFMAX(SDL_AUDIO_MIN_BUFFER_SIZE, 2 << av_log2(wanted_spec.freq / SDL_AUDIO_MAX_CALLBACKS_PER_SEC));
     wanted_spec.callback = sdl_audio_callback;
-    wanted_spec.userdata = opaque;
-    while (!(audio_dev = SDL_OpenAudioDevice(NULL, 0, &wanted_spec, &spec, SDL_AUDIO_ALLOW_FREQUENCY_CHANGE | SDL_AUDIO_ALLOW_CHANNELS_CHANGE))) {
+    wanted_spec.userdata = is;
+    while (!(is->audio_dev = SDL_OpenAudioDevice(NULL, 0, &wanted_spec, &spec, SDL_AUDIO_ALLOW_FREQUENCY_CHANGE | SDL_AUDIO_ALLOW_CHANNELS_CHANGE))) {
         av_log(NULL, AV_LOG_WARNING, "SDL_OpenAudio (%d channels, %d Hz): %s\n",
                wanted_spec.channels, wanted_spec.freq, SDL_GetError());
         wanted_spec.channels = next_nb_channels[FFMIN(7, wanted_spec.channels)];
@@ -3341,7 +2884,7 @@ static int init_lcevc_graph(AVFormatContext *ic, int stream_index)
 
     const AVStreamGroupLayeredVideo *lcevc = stg->params.layered_video;
     AVStream *base_st = ic->streams[stream_index];
-    AVStream *lcevc_st = stg->streams[lcevc->el_index];
+    AVStream *lcevc_st = stg->entries[lcevc->el_index]->stream;
     Stream *lcevc_sti = ici->streams[lcevc_st->index];
     Stream *base_sti = ici->streams[stream_index];
 
@@ -3404,6 +2947,35 @@ static int init_lcevc_graph(AVFormatContext *ic, int stream_index)
     return 0;
 }
 
+/* opens the audio device for the output of the audio filters and starts decoding and playing the audio */
+static int audio_start(VideoState *is)
+{
+    AVChannelLayout ch_layout = { 0 };
+    int ret = av_buffersink_get_ch_layout(is->out_audio_filter, &ch_layout);
+
+    if (ret >= 0)
+        ret = audio_open(is, &ch_layout, av_buffersink_get_sample_rate(is->out_audio_filter), &is->audio_tgt);
+    av_channel_layout_uninit(&ch_layout);
+    if (ret < 0)
+        return ret;
+    is->audio_hw_buf_size = ret;
+    is->audio_src = is->audio_tgt;
+    is->audio_buf_size  = 0;
+    is->audio_buf_index = 0;
+
+    /* init averaging filter */
+    is->audio_diff_avg_coef  = exp(log(0.01) / AUDIO_DIFF_AVG_NB);
+    is->audio_diff_avg_count = 0;
+    /* since we do not have a precise anough audio FIFO fullness,
+       we correct audio sync only if larger than this threshold */
+    is->audio_diff_threshold = (double)(is->audio_hw_buf_size) / is->audio_tgt.bytes_per_sec;
+
+    if ((ret = decoder_start(&is->auddec, audio_thread, "audio_decoder", is)) < 0)
+        return ret;
+    SDL_PauseAudioDevice(is->audio_dev, 0);
+    return 0;
+}
+
 /* open a given stream. Return 0 if OK */
 static int stream_component_open(VideoState *is, int stream_index)
 {
@@ -3413,8 +2985,6 @@ static int stream_component_open(VideoState *is, int stream_index)
     const AVCodec *codec;
     const char *forced_codec_name = NULL;
     AVDictionary *opts = NULL;
-    int sample_rate;
-    AVChannelLayout ch_layout = { 0 };
     int ret = 0;
     int stream_lowres = lowres;
 
@@ -3488,37 +3058,13 @@ static int stream_component_open(VideoState *is, int stream_index)
     ic->streams[stream_index]->discard = AVDISCARD_DEFAULT;
     switch (avctx->codec_type) {
     case AVMEDIA_TYPE_AUDIO:
-        {
-            AVFilterContext *sink;
-
-            is->audio_filter_src.freq           = avctx->sample_rate;
-            ret = av_channel_layout_copy(&is->audio_filter_src.ch_layout, &avctx->ch_layout);
-            if (ret < 0)
-                goto fail;
-            is->audio_filter_src.fmt            = avctx->sample_fmt;
-            if ((ret = configure_audio_filters(is, afilters, 0)) < 0)
-                goto fail;
-            sink = is->out_audio_filter;
-            sample_rate    = av_buffersink_get_sample_rate(sink);
-            ret = av_buffersink_get_ch_layout(sink, &ch_layout);
-            if (ret < 0)
-                goto fail;
-        }
-
-        /* prepare audio output */
-        if ((ret = audio_open(is, &ch_layout, sample_rate, &is->audio_tgt)) < 0)
+        is->audio_filter_src.freq           = avctx->sample_rate;
+        ret = av_channel_layout_copy(&is->audio_filter_src.ch_layout, &avctx->ch_layout);
+        if (ret < 0)
             goto fail;
-        is->audio_hw_buf_size = ret;
-        is->audio_src = is->audio_tgt;
-        is->audio_buf_size  = 0;
-        is->audio_buf_index = 0;
-
-        /* init averaging filter */
-        is->audio_diff_avg_coef  = exp(log(0.01) / AUDIO_DIFF_AVG_NB);
-        is->audio_diff_avg_count = 0;
-        /* since we do not have a precise anough audio FIFO fullness,
-           we correct audio sync only if larger than this threshold */
-        is->audio_diff_threshold = (double)(is->audio_hw_buf_size) / is->audio_tgt.bytes_per_sec;
+        is->audio_filter_src.fmt            = avctx->sample_fmt;
+        if ((ret = configure_audio_filters(is, afilters, 0)) < 0)
+            goto fail;
 
         is->audio_stream = stream_index;
         is->audio_st = ic->streams[stream_index];
@@ -3529,9 +3075,8 @@ static int stream_component_open(VideoState *is, int stream_index)
             is->auddec.start_pts = is->audio_st->start_time;
             is->auddec.start_pts_tb = is->audio_st->time_base;
         }
-        if ((ret = decoder_start(&is->auddec, audio_thread, "audio_decoder", is)) < 0)
-            goto out;
-        SDL_PauseAudioDevice(audio_dev, 0);
+        if (!SDL_AtomicGet(&is->replacement) && (ret = audio_start(is)) < 0)
+            stream_component_close(is, stream_index);
         break;
     case AVMEDIA_TYPE_VIDEO:
         is->video_stream = stream_index;
@@ -3564,7 +3109,6 @@ static int stream_component_open(VideoState *is, int stream_index)
 fail:
     avcodec_free_context(&avctx);
 out:
-    av_channel_layout_uninit(&ch_layout);
     av_dict_free(&opts);
 
     return ret;
@@ -3670,8 +3214,10 @@ static int read_thread(void *arg)
     int64_t stream_start_time;
     char metadata_description[96];
     int pkt_in_play_range = 0;
+    int announced = 0;
     const AVDictionaryEntry *t;
     SDL_mutex *wait_mutex = SDL_CreateMutex();
+    AVDictionary *format_options = NULL;
     int scan_all_pmts_set = 0;
     int64_t pkt_ts;
 
@@ -3704,21 +3250,23 @@ static int read_thread(void *arg)
     }
     ic->interrupt_callback.callback = decode_interrupt_cb;
     ic->interrupt_callback.opaque = is;
-    if (!av_dict_get(format_opts, "scan_all_pmts", NULL, AV_DICT_MATCH_CASE)) {
-        av_dict_set(&format_opts, "scan_all_pmts", "1", AV_DICT_DONT_OVERWRITE);
+    if ((ret = av_dict_copy(&format_options, format_opts, 0)) < 0)
+        goto fail;
+    if (!av_dict_get(format_options, "scan_all_pmts", NULL, AV_DICT_MATCH_CASE)) {
+        av_dict_set(&format_options, "scan_all_pmts", "1", AV_DICT_DONT_OVERWRITE);
         scan_all_pmts_set = 1;
     }
-    err = avformat_open_input(&ic, is->filename, is->iformat, &format_opts);
+    err = avformat_open_input(&ic, is->filename, is->iformat, &format_options);
     if (err < 0) {
         print_error(is->filename, err);
         ret = -1;
         goto fail;
     }
     if (scan_all_pmts_set)
-        av_dict_set(&format_opts, "scan_all_pmts", NULL, AV_DICT_MATCH_CASE);
-    remove_avoptions(&format_opts, codec_opts);
+        av_dict_set(&format_options, "scan_all_pmts", NULL, AV_DICT_MATCH_CASE);
+    remove_avoptions(&format_options, codec_opts);
 
-    ret = check_avoptions(format_opts);
+    ret = check_avoptions(format_options);
     if (ret < 0)
         goto fail;
     is->ic = ic;
@@ -3755,15 +3303,15 @@ static int read_thread(void *arg)
     if (ic->pb)
         ic->pb->eof_reached = 0; // FIXME hack, ffplay maybe should not use avio_feof() to test for the end
 
-    if (seek_by_bytes < 0)
-        seek_by_bytes = !(ic->iformat->flags & AVFMT_NO_BYTE_SEEK) &&
-                        !!(ic->iformat->flags & AVFMT_TS_DISCONT) &&
-                        strcmp("ogg", ic->iformat->name);
+    if (is->seek_by_bytes < 0)
+        is->seek_by_bytes = !(ic->iformat->flags & AVFMT_NO_BYTE_SEEK) &&
+                            !!(ic->iformat->flags & AVFMT_TS_DISCONT) &&
+                            strcmp("ogg", ic->iformat->name);
 
     is->max_frame_duration = (ic->iformat->flags & AVFMT_TS_DISCONT) ? 10.0 : 3600.0;
 
     if (!window_title && (t = av_dict_get(ic->metadata, "title", NULL, 0)))
-        window_title = av_asprintf("%s - %s", t->value, input_filename);
+        is->title = av_asprintf("%s - %s", t->value, is->filename);
 
     /* if seeking requested, we execute it */
     if (start_time != AV_NOPTS_VALUE) {
@@ -3832,11 +3380,18 @@ static int read_thread(void *arg)
 
         if (stg->type != AV_STREAM_GROUP_PARAMS_LCEVC)
             continue;
-        if (!av_bsf_get_by_name("lcevc_merge") || stg->nb_streams != 2)
+        if (!av_bsf_get_by_name("lcevc_merge") || stg->nb_entries != 2)
             continue;
+        for (int j = 0; j < stg->nb_entries; j++) {
+            AVStreamGroupEntry *entry = stg->entries[j];
+            if (entry->type != AV_STREAM_GROUP_ENTRY_STREAM) {
+                ret = AVERROR_BUG;
+                goto fail;
+            }
+        }
 
         const AVStreamGroupLayeredVideo *lcevc = stg->params.layered_video;
-        const AVStream *base_st = ic->streams[stg->streams[!lcevc->el_index]->index];
+        const AVStream *base_st = ic->streams[stg->entries[!lcevc->el_index]->stream->index];
         Stream *base_sti = ici->streams[base_st->index];
 
         base_sti->group = ici->stream_groups[i];
@@ -3899,9 +3454,11 @@ static int read_thread(void *arg)
         ret = -1;
         goto fail;
     }
+    if (is->video_stream < 0)
+        push_stream_event(is, FF_READY_EVENT);
 
-    if (infinite_buffer < 0 && is->realtime)
-        infinite_buffer = 1;
+    if (is->infinite_buffer < 0 && is->realtime)
+        is->infinite_buffer = 1;
 
     for (;;) {
         if (is->abort_request)
@@ -3916,7 +3473,7 @@ static int read_thread(void *arg)
 #if CONFIG_RTSP_DEMUXER || CONFIG_MMSH_PROTOCOL
         if (is->paused &&
                 (!strcmp(ic->iformat->name, "rtsp") ||
-                 (ic->pb && !strncmp(input_filename, "mmsh:", 5)))) {
+                 (ic->pb && !strncmp(is->filename, "mmsh:", 5)))) {
             /* wait 10 ms to avoid trying to get another packet */
             /* XXX: horrible */
             SDL_Delay(10);
@@ -3970,11 +3527,15 @@ static int read_thread(void *arg)
         }
 
         /* if the queue are full, no need to read more */
-        if (infinite_buffer<1 &&
+        if (is->infinite_buffer < 1 &&
               (is->audioq.size + is->videoq.size + is->subtitleq.size > MAX_QUEUE_SIZE
             || (stream_has_enough_packets(is->audio_st, is->audio_stream, &is->audioq) &&
                 stream_has_enough_packets(is->video_st, is->video_stream, &is->videoq) &&
                 stream_has_enough_packets(is->subtitle_st, is->subtitle_stream, &is->subtitleq)))) {
+            if (!announced && SDL_AtomicGet(&is->replacement) && is->audioq.size + is->videoq.size + is->subtitleq.size > MAX_QUEUE_SIZE) {
+                push_stream_event(is, FF_READY_EVENT);
+                announced = 1;
+            }
             /* wait 10 ms */
             SDL_LockMutex(wait_mutex);
             SDL_CondWaitTimeout(is->continue_read_thread, wait_mutex, 10);
@@ -3984,7 +3545,7 @@ static int read_thread(void *arg)
         if (!is->paused &&
             (!is->audio_st || (is->auddec.finished == is->audioq.serial && frame_queue_nb_remaining(&is->sampq) == 0)) &&
             (!is->video_st || (is->viddec.finished == is->videoq.serial && frame_queue_nb_remaining(&is->pictq) == 0))) {
-            if (loop != 1 && (!loop || --loop)) {
+            if (is->loop != 1 && (!is->loop || --is->loop)) {
                 stream_seek(is, start_time != AV_NOPTS_VALUE ? start_time : 0, 0, 0);
             } else if (autoexit) {
                 ret = AVERROR_EOF;
@@ -4080,21 +3641,19 @@ static int read_thread(void *arg)
         av_freep(&ic->opaque);
         avformat_close_input(&ic);
     }
+    av_dict_free(&format_options);
 
     av_packet_free(&pkt);
-    if (ret != 0) {
-        SDL_Event event;
-
-        event.type = FF_QUIT_EVENT;
-        event.user.data1 = is;
-        SDL_PushEvent(&event);
-    }
+    if (ret != 0)
+        push_stream_event(is, FF_QUIT_EVENT);
     SDL_DestroyMutex(wait_mutex);
     return 0;
 }
 
+/* replaced is the stream playing which the new one is to replace, NULL for none; the replacement starts paused with
+ * the volume of the stream it replaces, and opens no audio device before stream_replace() */
 static VideoState *stream_open(const char *filename,
-                               const AVInputFormat *iformat)
+                               const AVInputFormat *iformat, const VideoState *replaced)
 {
     VideoState *is;
 
@@ -4105,9 +3664,13 @@ static VideoState *stream_open(const char *filename,
     is->last_audio_stream = is->audio_stream = -1;
     is->last_subtitle_stream = is->subtitle_stream = -1;
     is->filename = av_strdup(filename);
+    is->id = ++last_stream_id;
     if (!is->filename)
         goto fail;
     is->iformat = iformat;
+    is->seek_by_bytes   = seek_by_bytes;
+    is->infinite_buffer = infinite_buffer;
+    is->loop            = loop;
     is->ytop    = 0;
     is->xleft   = 0;
 
@@ -4147,10 +3710,14 @@ static VideoState *stream_open(const char *filename,
                 goto fail;
         }
     }
-    startup_volume = av_clip(startup_volume, 0, 100);
-    startup_volume = av_clip(SDL_MIX_MAXVOLUME * startup_volume / 100, 0, SDL_MIX_MAXVOLUME);
-    is->audio_volume = startup_volume;
+    is->audio_volume = SDL_MIX_MAXVOLUME * av_clip(startup_volume, 0, 100) / 100;
     is->muted = 0;
+    if (replaced) {
+        SDL_AtomicSet(&is->replacement, 1);
+        is->audio_volume = replaced->audio_volume;
+        is->muted        = replaced->muted;
+        is->paused = is->audclk.paused = is->vidclk.paused = is->extclk.paused = 1;
+    }
     is->av_sync_type = av_sync_type;
     is->read_tid     = SDL_CreateThread(read_thread, "read_thread", is);
     if (!is->read_tid) {
@@ -4271,12 +3838,18 @@ static void refresh_loop_wait_event(VideoState *is, SDL_Event *event) {
             SDL_ShowCursor(0);
             cursor_hidden = 1;
         }
-        if (remaining_time > 0.0)
-            av_usleep((int64_t)(remaining_time * 1000000.0));
+        if (remaining_time > 0.0) {
+            if (!wait_for_events)
+                av_usleep((int64_t)(remaining_time * 1000000.0));
+            else if (SDL_WaitEventTimeout(NULL, ceil(remaining_time * 1000)))
+                continue;
+        }
         remaining_time = REFRESH_RATE;
-        if (is->chapter_render_pending || (chapter_list_visible(is) && current_chapter(is) != is->chapter_playing))
-            chapter_list_render(is);
-        if (chapter_list_alpha(is, av_gettime_relative()) != is->chapter_drawn_alpha)
+        if (list_view_visible(list))
+            list_view_set_playing(list, list_shows_files ? -1 : current_chapter(is));
+        if (dir_thread && SDL_AtomicGet(&dir_request.done))
+            file_list_listed(is);
+        if (list_view_update(list))
             is->force_refresh = 1;
         if (is->show_mode != SHOW_MODE_NONE && (!is->paused || is->force_refresh))
             video_refresh(is, &remaining_time);
@@ -4310,18 +3883,186 @@ static void seek_chapter(VideoState *is, int i)
                                  AV_TIME_BASE_Q), 0, 0);
 }
 
+/* shows the files of the directory with the entry selected */
+static int file_list_show(DirList *dl, int selected)
+{
+    int ret;
+
+    if (!list_shows_files)
+        list_view_clear(list);
+    ret = list_view_show(list, dl->entries, dl->nb_entries, selected);
+    if (ret >= 0)
+        list_shows_files = 1;
+    return ret;
+}
+
+/* opens the file to replace the stream playing once it can play */
+static void file_play(VideoState *is, const char *path)
+{
+    if (next_stream)
+        stream_close(next_stream);
+    if (!(next_stream = stream_open(path, file_iformat, is)))
+        av_log(NULL, AV_LOG_ERROR, "Could not open '%s'\n", path);
+}
+
+static int dir_interrupt_cb(void *ctx)
+{
+    return SDL_AtomicGet(&dir_request.abort);
+}
+
+static int dir_thread_func(void *arg)
+{
+    const AVIOInterruptCB int_cb = { dir_interrupt_cb };
+
+    dir_request.ret = dir_list_read(&dir_request.dl, dir_request.path, &int_cb, &dir_request.options);
+    SDL_AtomicSet(&dir_request.done, 1);
+    return 0;
+}
+
+/* starts reading the directory on dir_thread, unless it is busy; with play_if_no_dir the path is played when it is no
+ * directory */
+static void file_list_read(const char *path, int play_if_no_dir)
+{
+    int ret = 0;
+
+    if (dir_thread) {
+        av_log(NULL, AV_LOG_VERBOSE, "Not listing '%s' while '%s' is being read\n", path, dir_request.path);
+        return;
+    }
+    dir_request.play_if_no_dir = play_if_no_dir;
+    dir_request.cancelled      = 0;
+    SDL_AtomicSet(&dir_request.abort, 0);
+    SDL_AtomicSet(&dir_request.done, 0);
+    if (!(dir_request.path = av_strdup(path)))
+        ret = AVERROR(ENOMEM);
+    else
+        ret = av_dict_copy(&dir_request.options, format_opts, 0);
+    if (ret < 0 || !(dir_thread = SDL_CreateThread(dir_thread_func, "dir_reader", NULL))) {
+        av_log(NULL, AV_LOG_ERROR, "Could not list the directory '%s': %s\n", path, ret < 0 ? av_err2str(ret) : SDL_GetError());
+        av_freep(&dir_request.path);
+        av_dict_free(&dir_request.options);
+    }
+}
+
+/* takes over what dir_thread read: shows the directory, plays the path when it is no directory, or drops the result of
+ * a cancelled request */
+static void file_list_listed(VideoState *is)
+{
+    int ret;
+
+    SDL_WaitThread(dir_thread, NULL);
+    dir_thread = NULL;
+    av_dict_free(&dir_request.options);
+    if (dir_request.cancelled) {
+        dir_list_free(&dir_request.dl);
+    } else if (dir_request.ret < 0) {
+        av_log(NULL, dir_request.play_if_no_dir ? AV_LOG_VERBOSE : AV_LOG_ERROR, "Could not list the directory '%s': %s\n",
+               dir_request.path, av_err2str(dir_request.ret));
+        if (dir_request.play_if_no_dir)
+            file_play(is, dir_request.path);
+    } else if ((ret = file_list_show(dir_request.dl, 0)) < 0) {
+        av_log(NULL, AV_LOG_ERROR, "Could not show the list: %s\n", av_err2str(ret));
+        dir_list_free(&dir_request.dl);
+    } else {
+        dir_list_free(&dir_list);
+        dir_list = dir_request.dl;
+        dir_request.dl = NULL;
+        list_view_clear_search(list);
+        list_view_pin(list, 1);
+    }
+    av_freep(&dir_request.path);
+}
+
+/* pins the file list, showing the directory listed last or else the directory of the input */
+static void file_list_open(VideoState *is)
+{
+    const char *name = is->filename, *dir;
+    char *path;
+
+    if (dir_list) {
+        if (file_list_show(dir_list, -1) >= 0)
+            list_view_pin(list, 1);
+        return;
+    }
+    av_strstart(name, "file:", &name);
+    if (!(path = av_strdup(name)))
+        return;
+    dir = av_dirname(path);
+    file_list_read(*dir ? dir : "/", 0);
+    av_free(path);
+}
+
+/* lists the chosen directory, or plays the chosen file */
+static void file_list_choose(VideoState *is, int entry)
+{
+    char *path = dir_list_path(dir_list, entry);
+
+    if (!path)
+        return;
+    if (entry < dir_list->nb_dirs + dir_list->nb_maybe_dirs)
+        file_list_read(path, entry >= dir_list->nb_dirs);
+    else
+        file_play(is, path);
+    av_free(path);
+}
+
+static void list_choose(VideoState *is, int entry)
+{
+    if (list_shows_files)
+        file_list_choose(is, entry);
+    else
+        seek_chapter(is, entry);
+}
+
+/* plays next_stream instead of the stream playing, which goes on from its position when next_stream has no video and
+ * its audio cannot play */
+static VideoState *stream_replace(VideoState *is)
+{
+    int audio_stream = is->audio_stream;
+    double pos = get_master_clock(is);
+
+    stream_component_close(is, audio_stream);
+    SDL_AtomicSet(&next_stream->replacement, 0);
+    if (next_stream->audio_stream >= 0 && audio_start(next_stream) < 0) {
+        stream_component_close(next_stream, next_stream->audio_stream);
+        if (next_stream->video_stream < 0) {
+            av_log(NULL, AV_LOG_ERROR, "Could not play '%s'\n", next_stream->filename);
+            stream_close(next_stream);
+            next_stream = NULL;
+            if (audio_stream >= 0 && stream_component_open(is, audio_stream) < 0)
+                av_log(NULL, AV_LOG_ERROR, "Could not reopen the audio of '%s'\n", is->filename);
+            if (!is->seek_by_bytes && !isnan(pos))
+                stream_seek(is, (int64_t)(pos * AV_TIME_BASE), 0, 0);
+            return is;
+        }
+    }
+    /* the chapter entries belong to the stream closed */
+    if (!list_shows_files)
+        list_view_clear(list);
+    list_view_pin(list, 0);
+    next_stream->width  = is->width;
+    next_stream->height = is->height;
+    stream_close(is);
+    is = next_stream;
+    next_stream = NULL;
+    SDL_SetWindowTitle(window, window_title ? window_title : is->title ? is->title : is->filename);
+    toggle_pause(is);
+    return is;
+}
+
 /* handle an event sent by the GUI */
 static void event_loop(VideoState *cur_stream)
 {
     SDL_Event event;
     double incr, pos, frac;
+    int chosen;
 
     for (;;) {
         double x;
         refresh_loop_wait_event(cur_stream, &event);
         switch (event.type) {
         case SDL_KEYDOWN:
-            if (exit_on_keydown || (!cur_stream->chapter_pinned &&
+            if (exit_on_keydown || (!list_view_pinned(list) &&
                                     (event.key.keysym.sym == SDLK_ESCAPE || event.key.keysym.sym == SDLK_q))) {
                 do_exit(cur_stream);
                 break;
@@ -4329,8 +4070,16 @@ static void event_loop(VideoState *cur_stream)
             // If we don't yet have a window, skip all key events, because read_thread might still be initializing...
             if (!cur_stream->width)
                 continue;
-            if (cur_stream->chapter_pinned) {
-                chapter_list_key(cur_stream, event.key.keysym.sym);
+            if (list_view_pinned(list)) {
+                if (!list_shows_files && (event.key.keysym.sym == SDLK_PAGEUP || event.key.keysym.sym == SDLK_PAGEDOWN))
+                    seek_chapter(cur_stream, current_chapter(cur_stream) + (event.key.keysym.sym == SDLK_PAGEUP ? 1 : -1));
+                else if ((chosen = list_view_key(list, event.key.keysym.sym)) >= 0)
+                    list_choose(cur_stream, chosen);
+                /* escape while a directory is being read for the list */
+                if (dir_thread && !list_view_pinned(list)) {
+                    dir_request.cancelled = 1;
+                    SDL_AtomicSet(&dir_request.abort, 1);
+                }
                 break;
             }
             switch (event.key.keysym.sym) {
@@ -4371,12 +4120,15 @@ static void event_loop(VideoState *cur_stream)
                 stream_cycle_channel(cur_stream, AVMEDIA_TYPE_SUBTITLE);
                 break;
             case SDLK_l:
-                cur_stream->chapter_pin_requested = cur_stream->ic->nb_chapters > 0;
+                list_key = cur_stream->ic->nb_chapters > 0 ? SDLK_l : 0;
+                break;
+            case SDLK_o:
+                list_key = SDLK_o;
                 break;
             case SDLK_RETURN:
             case SDLK_KP_ENTER:
-                if (chapter_list_visible(cur_stream) && cur_stream->nb_chapter_rows)
-                    seek_chapter(cur_stream, cur_stream->chapter_rows[cur_stream->chapter_selected].index);
+                if (list_view_visible(list) && (chosen = list_view_selected(list)) >= 0)
+                    list_choose(cur_stream, chosen);
                 break;
             case SDLK_w:
                 if (cur_stream->show_mode == SHOW_MODE_VIDEO && cur_stream->vfilter_idx < nb_vfilters - 1) {
@@ -4413,7 +4165,7 @@ static void event_loop(VideoState *cur_stream)
             case SDLK_DOWN:
                 incr = -60.0;
             do_seek:
-                    if (seek_by_bytes) {
+                    if (cur_stream->seek_by_bytes) {
                         pos = -1;
                         if (pos < 0 && cur_stream->video_stream >= 0)
                             pos = frame_queue_last_pos(&cur_stream->pictq);
@@ -4443,26 +4195,33 @@ static void event_loop(VideoState *cur_stream)
             break;
         case SDL_KEYUP:
             /* on the release of a press made while unpinned, so that the key's own text input does not start the search */
-            if (event.key.keysym.sym == SDLK_l && cur_stream->chapter_pin_requested)
-                chapter_list_pin(cur_stream, 1);
-            cur_stream->chapter_pin_requested = 0;
+            if (list_key && event.key.keysym.sym == list_key) {
+                if (list_key == SDLK_o)
+                    file_list_open(cur_stream);
+                else
+                    chapter_list_pin(cur_stream);
+            }
+            list_key = 0;
             break;
         case SDL_TEXTINPUT:
-            if (cur_stream->chapter_pinned)
-                chapter_list_search(cur_stream, event.text.text);
+            if (list_view_pinned(list))
+                list_view_text(list, event.text.text);
             break;
         case SDL_MOUSEWHEEL:
-            if (chapter_list_visible(cur_stream))
-                chapter_list_move(cur_stream, -event.wheel.y);
+            if (list_view_visible(list))
+                list_view_move(list, -event.wheel.y);
             break;
         case SDL_MOUSEBUTTONDOWN:
             if (exit_on_mousedown) {
                 do_exit(cur_stream);
                 break;
             }
-            if (event.button.button == SDL_BUTTON_LEFT && chapter_list_visible(cur_stream) &&
-                chapter_list_click(cur_stream, event.button.x, event.button.y))
+            if (event.button.button == SDL_BUTTON_LEFT && list_view_visible(list) &&
+                list_view_click(list, event.button.x, event.button.y, &chosen)) {
+                if (chosen >= 0)
+                    list_choose(cur_stream, chosen);
                 break;
+            }
             if (event.button.button == SDL_BUTTON_LEFT) {
                 static int64_t last_mouse_left_click = 0;
                 if (av_gettime_relative() - last_mouse_left_click <= 500000) {
@@ -4481,7 +4240,7 @@ static void event_loop(VideoState *cur_stream)
             }
             cursor_last_shown = av_gettime_relative();
             if (event.type == SDL_MOUSEMOTION)
-                chapter_list_hover(cur_stream, event.motion.x, event.motion.y);
+                list_view_hover(list, event.motion.x, event.motion.y);
             if (event.type == SDL_MOUSEBUTTONDOWN) {
                 if (event.button.button != SDL_BUTTON_RIGHT)
                     break;
@@ -4491,7 +4250,7 @@ static void event_loop(VideoState *cur_stream)
                     break;
                 x = event.motion.x;
             }
-                if (seek_by_bytes || cur_stream->ic->duration <= 0) {
+                if (cur_stream->seek_by_bytes || cur_stream->ic->duration <= 0) {
                     uint64_t size =  avio_size(cur_stream->ic->pb);
                     stream_seek(cur_stream, size*x/cur_stream->width, 0, 1);
                 } else {
@@ -4519,7 +4278,7 @@ static void event_loop(VideoState *cur_stream)
         case SDL_WINDOWEVENT:
             switch (event.window.event) {
                 case SDL_WINDOWEVENT_LEAVE:
-                    chapter_list_hover(cur_stream, -1, -1);
+                    list_view_hover(list, -1, -1);
                     break;
                 case SDL_WINDOWEVENT_SIZE_CHANGED:
                     screen_width  = cur_stream->width  = event.window.data1;
@@ -4528,9 +4287,7 @@ static void event_loop(VideoState *cur_stream)
                         SDL_DestroyTexture(cur_stream->vis_texture);
                         cur_stream->vis_texture = NULL;
                     }
-                    avfilter_graph_free(&cur_stream->chapter_graph);
-                    if (cur_stream->chapter_texture)
-                        chapter_list_render(cur_stream);
+                    list_view_set_size(list, screen_width, screen_height);
                     if (vk_renderer)
                         vk_renderer_resize(vk_renderer, screen_width, screen_height);
                     av_fallthrough;
@@ -4538,8 +4295,20 @@ static void event_loop(VideoState *cur_stream)
                     cur_stream->force_refresh = 1;
             }
             break;
-        case SDL_QUIT:
+        case FF_READY_EVENT:
+            if (next_stream && event.user.code == next_stream->id)
+                cur_stream = stream_replace(cur_stream);
+            break;
         case FF_QUIT_EVENT:
+            if (next_stream && event.user.code == next_stream->id) {
+                av_log(NULL, AV_LOG_ERROR, "Could not play '%s'\n", next_stream->filename);
+                stream_close(next_stream);
+                next_stream = NULL;
+            }
+            if (event.user.code != cur_stream->id)
+                break;
+            av_fallthrough;
+        case SDL_QUIT:
             do_exit(cur_stream);
             break;
         default:
@@ -4599,7 +4368,8 @@ static int opt_show_mode(void *optctx, const char *opt, const char *arg)
 {
     show_mode = !strcmp(arg, "video") ? SHOW_MODE_VIDEO :
                 !strcmp(arg, "waves") ? SHOW_MODE_WAVES :
-                !strcmp(arg, "rdft" ) ? SHOW_MODE_RDFT  : SHOW_MODE_NONE;
+                !strcmp(arg, "rdft" ) ? SHOW_MODE_RDFT  :
+                !strcmp(arg, "phase") ? SHOW_MODE_PHASE : SHOW_MODE_NONE;
 
     if (show_mode == SHOW_MODE_NONE) {
         double num;
@@ -4695,7 +4465,7 @@ static const OptionDef options[] = {
     { "vf",                 OPT_TYPE_FUNC, OPT_FUNC_ARG | OPT_EXPERT, { .func_arg = opt_add_vfilter }, "set video filters", "filter_graph" },
     { "af",                 OPT_TYPE_STRING,          0, { &afilters }, "set audio filters", "filter_graph" },
     { "rdftspeed",          OPT_TYPE_INT, OPT_AUDIO | OPT_EXPERT, { &rdftspeed }, "rdft speed", "msecs" },
-    { "showmode",           OPT_TYPE_FUNC, OPT_FUNC_ARG, { .func_arg = opt_show_mode}, "select show mode (0 = video, 1 = waves, 2 = RDFT)", "mode" },
+    { "showmode",           OPT_TYPE_FUNC, OPT_FUNC_ARG, { .func_arg = opt_show_mode}, "select show mode (0 = video, 1 = waves, 2 = RDFT, 3 = phase)", "mode" },
     { "i",                  OPT_TYPE_BOOL,            0, { &dummy}, "read specified file", "input_file"},
     { "codec",              OPT_TYPE_FUNC, OPT_FUNC_ARG, { .func_arg = opt_codec}, "force decoder", "decoder_name" },
     { "acodec",             OPT_TYPE_STRING, OPT_EXPERT, {    &audio_codec_name }, "force audio decoder",    "decoder_name" },
@@ -4746,6 +4516,7 @@ void show_help_default(const char *opt, const char *arg)
            "down/up             seek backward/forward 1 minute\n"
            "page down/page up   seek to previous/next chapter or backward/forward 10 minutes if no chapters\n"
            "l                   keep the chapter list on screen; typing then filters it, down/up move its selection and escape closes it\n"
+           "o                   list the directory of the input; enter or a click opens a directory or plays a file, escape closes the list\n"
            "enter               seek to the chapter selected in the chapter list while it is shown\n"
            "mouse wheel         move the chapter list selection while it is shown\n"
            "left click          seek to the clicked chapter list entry, or sort the list by the clicked column, again to flip it;\n"
@@ -4844,6 +4615,10 @@ int main(int argc, char **argv)
             av_log(NULL, AV_LOG_FATAL, "Failed to create window: %s", SDL_GetError());
             do_exit(NULL);
         }
+        SDL_version version;
+        SDL_GetVersion(&version);
+        /* SDL before 2.0.16 waits for events by polling */
+        wait_for_events = SDL_VERSIONNUM(version.major, version.minor, version.patch) >= SDL_VERSIONNUM(2, 0, 16);
 
         if (vk_renderer) {
             AVDictionary *dict = NULL;
@@ -4878,7 +4653,12 @@ int main(int argc, char **argv)
         }
     }
 
-    is = stream_open(input_filename, file_iformat);
+    list = list_view_alloc(renderer);
+    if (!list) {
+        av_log(NULL, AV_LOG_FATAL, "Could not allocate the list\n");
+        do_exit(NULL);
+    }
+    is = stream_open(input_filename, file_iformat, NULL);
     if (!is) {
         av_log(NULL, AV_LOG_FATAL, "Failed to initialize VideoState!\n");
         do_exit(NULL);

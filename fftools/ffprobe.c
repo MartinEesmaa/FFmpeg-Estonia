@@ -42,6 +42,7 @@
 #include "libavutil/downmix_info.h"
 #include "libavutil/display.h"
 #include "libavutil/film_grain_params.h"
+#include "libavutil/gain_map.h"
 #include "libavutil/hdr_dynamic_metadata.h"
 #include "libavutil/iamf.h"
 #include "libavutil/mastering_display_metadata.h"
@@ -190,6 +191,8 @@ typedef enum {
     SECTION_ID_PACKETS_AND_FRAMES,
     SECTION_ID_PACKET_SIDE_DATA_LIST,
     SECTION_ID_PACKET_SIDE_DATA,
+    SECTION_ID_PACKET_SIDE_DATA_COMPONENT_LIST,
+    SECTION_ID_PACKET_SIDE_DATA_COMPONENT,
     SECTION_ID_PIXEL_FORMAT,
     SECTION_ID_PIXEL_FORMAT_FLAGS,
     SECTION_ID_PIXEL_FORMAT_COMPONENT,
@@ -197,6 +200,10 @@ typedef enum {
     SECTION_ID_PIXEL_FORMATS,
     SECTION_ID_PROGRAM_STREAM_DISPOSITION,
     SECTION_ID_PROGRAM_STREAM_TAGS,
+    SECTION_ID_PROGRAM_STREAM_SIDE_DATA_LIST,
+    SECTION_ID_PROGRAM_STREAM_SIDE_DATA,
+    SECTION_ID_PROGRAM_STREAM_SIDE_DATA_COMPONENT_LIST,
+    SECTION_ID_PROGRAM_STREAM_SIDE_DATA_COMPONENT,
     SECTION_ID_PROGRAM,
     SECTION_ID_PROGRAM_STREAMS,
     SECTION_ID_PROGRAM_STREAM,
@@ -205,6 +212,12 @@ typedef enum {
     SECTION_ID_PROGRAMS,
     SECTION_ID_STREAM_GROUP_STREAM_DISPOSITION,
     SECTION_ID_STREAM_GROUP_STREAM_TAGS,
+    SECTION_ID_STREAM_GROUP_STREAM_SIDE_DATA_LIST,
+    SECTION_ID_STREAM_GROUP_STREAM_SIDE_DATA,
+    SECTION_ID_STREAM_GROUP_STREAM_SIDE_DATA_COMPONENT_LIST,
+    SECTION_ID_STREAM_GROUP_STREAM_SIDE_DATA_COMPONENT,
+    SECTION_ID_STREAM_GROUP_STREAM_GROUP_DISPOSITION,
+    SECTION_ID_STREAM_GROUP_STREAM_GROUP_TAGS,
     SECTION_ID_STREAM_GROUP,
     SECTION_ID_STREAM_GROUP_COMPONENTS,
     SECTION_ID_STREAM_GROUP_COMPONENT,
@@ -218,8 +231,12 @@ typedef enum {
     SECTION_ID_STREAM_GROUP_BLOCK,
     SECTION_ID_STREAM_GROUP_SIDE_DATA_LIST,
     SECTION_ID_STREAM_GROUP_SIDE_DATA,
+    SECTION_ID_STREAM_GROUP_SIDE_DATA_COMPONENT_LIST,
+    SECTION_ID_STREAM_GROUP_SIDE_DATA_COMPONENT,
     SECTION_ID_STREAM_GROUP_STREAMS,
     SECTION_ID_STREAM_GROUP_STREAM,
+    SECTION_ID_STREAM_GROUP_STREAM_GROUPS,
+    SECTION_ID_STREAM_GROUP_STREAM_GROUP,
     SECTION_ID_STREAM_GROUP_DISPOSITION,
     SECTION_ID_STREAM_GROUP_TAGS,
     SECTION_ID_STREAM_GROUPS,
@@ -230,6 +247,8 @@ typedef enum {
     SECTION_ID_STREAM_TAGS,
     SECTION_ID_STREAM_SIDE_DATA_LIST,
     SECTION_ID_STREAM_SIDE_DATA,
+    SECTION_ID_STREAM_SIDE_DATA_COMPONENT_LIST,
+    SECTION_ID_STREAM_SIDE_DATA_COMPONENT,
     SECTION_ID_SUBTITLE,
 } SectionID;
 
@@ -283,7 +302,9 @@ static const AVTextFormatSection sections[] = {
     [SECTION_ID_PACKET] =             { SECTION_ID_PACKET, "packet", 0, { SECTION_ID_PACKET_TAGS, SECTION_ID_PACKET_SIDE_DATA_LIST, -1 } },
     [SECTION_ID_PACKET_TAGS] =        { SECTION_ID_PACKET_TAGS, "tags", AV_TEXTFORMAT_SECTION_FLAG_HAS_VARIABLE_FIELDS, { -1 }, .element_name = "tag", .unique_name = "packet_tags" },
     [SECTION_ID_PACKET_SIDE_DATA_LIST] ={ SECTION_ID_PACKET_SIDE_DATA_LIST, "side_data_list", AV_TEXTFORMAT_SECTION_FLAG_IS_ARRAY, { SECTION_ID_PACKET_SIDE_DATA, -1 }, .element_name = "side_data", .unique_name = "packet_side_data_list" },
-    [SECTION_ID_PACKET_SIDE_DATA] =     { SECTION_ID_PACKET_SIDE_DATA, "side_data", AV_TEXTFORMAT_SECTION_FLAG_HAS_VARIABLE_FIELDS|AV_TEXTFORMAT_SECTION_FLAG_HAS_TYPE, { -1 }, .unique_name = "packet_side_data", .element_name = "side_datum", .get_type = get_packet_side_data_type },
+    [SECTION_ID_PACKET_SIDE_DATA] =     { SECTION_ID_PACKET_SIDE_DATA, "side_data", AV_TEXTFORMAT_SECTION_FLAG_HAS_VARIABLE_FIELDS|AV_TEXTFORMAT_SECTION_FLAG_HAS_TYPE, { SECTION_ID_PACKET_SIDE_DATA_COMPONENT_LIST, -1 }, .unique_name = "packet_side_data", .element_name = "side_datum", .get_type = get_packet_side_data_type },
+    [SECTION_ID_PACKET_SIDE_DATA_COMPONENT_LIST] = { SECTION_ID_PACKET_SIDE_DATA_COMPONENT_LIST, "components", AV_TEXTFORMAT_SECTION_FLAG_IS_ARRAY, { SECTION_ID_PACKET_SIDE_DATA_COMPONENT, -1 }, .element_name = "component", .unique_name = "packet_side_data_components" },
+    [SECTION_ID_PACKET_SIDE_DATA_COMPONENT] =      { SECTION_ID_PACKET_SIDE_DATA_COMPONENT, "component", AV_TEXTFORMAT_SECTION_FLAG_HAS_VARIABLE_FIELDS|AV_TEXTFORMAT_SECTION_FLAG_HAS_TYPE, { -1 }, .unique_name = "packet_side_data_component", .element_name = "component_entry", .get_type = get_raw_string_type },
     [SECTION_ID_PIXEL_FORMATS] =      { SECTION_ID_PIXEL_FORMATS, "pixel_formats", AV_TEXTFORMAT_SECTION_FLAG_IS_ARRAY, { SECTION_ID_PIXEL_FORMAT, -1 } },
     [SECTION_ID_PIXEL_FORMAT] =       { SECTION_ID_PIXEL_FORMAT, "pixel_format", 0, { SECTION_ID_PIXEL_FORMAT_FLAGS, SECTION_ID_PIXEL_FORMAT_COMPONENTS, -1 } },
     [SECTION_ID_PIXEL_FORMAT_FLAGS] = { SECTION_ID_PIXEL_FORMAT_FLAGS, "flags", 0, { -1 }, .unique_name = "pixel_format_flags" },
@@ -291,17 +312,27 @@ static const AVTextFormatSection sections[] = {
     [SECTION_ID_PIXEL_FORMAT_COMPONENT]  = { SECTION_ID_PIXEL_FORMAT_COMPONENT, "component", 0, { -1 } },
     [SECTION_ID_PROGRAM_STREAM_DISPOSITION] = { SECTION_ID_PROGRAM_STREAM_DISPOSITION, "disposition", 0, { -1 }, .unique_name = "program_stream_disposition" },
     [SECTION_ID_PROGRAM_STREAM_TAGS] =        { SECTION_ID_PROGRAM_STREAM_TAGS, "tags", AV_TEXTFORMAT_SECTION_FLAG_HAS_VARIABLE_FIELDS, { -1 }, .element_name = "tag", .unique_name = "program_stream_tags" },
+    [SECTION_ID_PROGRAM_STREAM_SIDE_DATA_LIST] = { SECTION_ID_PROGRAM_STREAM_SIDE_DATA_LIST, "side_data_list", AV_TEXTFORMAT_SECTION_FLAG_IS_ARRAY, { SECTION_ID_PROGRAM_STREAM_SIDE_DATA, -1 }, .element_name = "side_data", .unique_name = "program_stream_side_data_list" },
+    [SECTION_ID_PROGRAM_STREAM_SIDE_DATA] =      { SECTION_ID_PROGRAM_STREAM_SIDE_DATA, "side_data", AV_TEXTFORMAT_SECTION_FLAG_HAS_TYPE|AV_TEXTFORMAT_SECTION_FLAG_HAS_VARIABLE_FIELDS, { SECTION_ID_PROGRAM_STREAM_SIDE_DATA_COMPONENT_LIST, -1 }, .unique_name = "program_stream_side_data", .element_name = "side_datum", .get_type = get_packet_side_data_type },
+    [SECTION_ID_PROGRAM_STREAM_SIDE_DATA_COMPONENT_LIST] = { SECTION_ID_PROGRAM_STREAM_SIDE_DATA_COMPONENT_LIST, "components", AV_TEXTFORMAT_SECTION_FLAG_IS_ARRAY, { SECTION_ID_PROGRAM_STREAM_SIDE_DATA_COMPONENT, -1 }, .element_name = "component", .unique_name = "program_stream_side_data_components" },
+    [SECTION_ID_PROGRAM_STREAM_SIDE_DATA_COMPONENT] =      { SECTION_ID_PROGRAM_STREAM_SIDE_DATA_COMPONENT, "component", AV_TEXTFORMAT_SECTION_FLAG_HAS_VARIABLE_FIELDS|AV_TEXTFORMAT_SECTION_FLAG_HAS_TYPE, { -1 }, .unique_name = "program_stream_side_data_component", .element_name = "component_entry", .get_type = get_raw_string_type },
     [SECTION_ID_PROGRAM] =                    { SECTION_ID_PROGRAM, "program", 0, { SECTION_ID_PROGRAM_TAGS, SECTION_ID_PROGRAM_STREAMS, -1 } },
     [SECTION_ID_PROGRAM_STREAMS] =            { SECTION_ID_PROGRAM_STREAMS, "streams", AV_TEXTFORMAT_SECTION_FLAG_IS_ARRAY, { SECTION_ID_PROGRAM_STREAM, -1 }, .unique_name = "program_streams" },
-    [SECTION_ID_PROGRAM_STREAM] =             { SECTION_ID_PROGRAM_STREAM, "stream", 0, { SECTION_ID_PROGRAM_STREAM_DISPOSITION, SECTION_ID_PROGRAM_STREAM_TAGS, -1 }, .unique_name = "program_stream" },
+    [SECTION_ID_PROGRAM_STREAM] =             { SECTION_ID_PROGRAM_STREAM, "stream", 0, { SECTION_ID_PROGRAM_STREAM_DISPOSITION, SECTION_ID_PROGRAM_STREAM_TAGS, SECTION_ID_PROGRAM_STREAM_SIDE_DATA_LIST, -1 }, .unique_name = "program_stream" },
     [SECTION_ID_PROGRAM_TAGS] =               { SECTION_ID_PROGRAM_TAGS, "tags", AV_TEXTFORMAT_SECTION_FLAG_HAS_VARIABLE_FIELDS, { -1 }, .element_name = "tag", .unique_name = "program_tags" },
     [SECTION_ID_PROGRAM_VERSION] =    { SECTION_ID_PROGRAM_VERSION, "program_version", 0, { -1 } },
     [SECTION_ID_PROGRAMS] =                   { SECTION_ID_PROGRAMS, "programs", AV_TEXTFORMAT_SECTION_FLAG_IS_ARRAY, { SECTION_ID_PROGRAM, -1 } },
+    [SECTION_ID_STREAM_GROUP_STREAM_GROUP_DISPOSITION] = { SECTION_ID_STREAM_GROUP_STREAM_GROUP_DISPOSITION, "disposition", 0, { -1 }, .unique_name = "stream_group_stream_group_disposition" },
+    [SECTION_ID_STREAM_GROUP_STREAM_GROUP_TAGS] =  { SECTION_ID_STREAM_GROUP_STREAM_GROUP_TAGS, "tags", AV_TEXTFORMAT_SECTION_FLAG_HAS_VARIABLE_FIELDS, { -1 }, .element_name = "tag", .unique_name = "stream_group_stream_group_tags" },
     [SECTION_ID_STREAM_GROUP_STREAM_DISPOSITION] = { SECTION_ID_STREAM_GROUP_STREAM_DISPOSITION, "disposition", 0, { -1 }, .unique_name = "stream_group_stream_disposition" },
     [SECTION_ID_STREAM_GROUP_STREAM_TAGS] =        { SECTION_ID_STREAM_GROUP_STREAM_TAGS, "tags", AV_TEXTFORMAT_SECTION_FLAG_HAS_VARIABLE_FIELDS, { -1 }, .element_name = "tag", .unique_name = "stream_group_stream_tags" },
-    [SECTION_ID_STREAM_GROUP] =                    { SECTION_ID_STREAM_GROUP, "stream_group", 0, { SECTION_ID_STREAM_GROUP_TAGS, SECTION_ID_STREAM_GROUP_DISPOSITION, SECTION_ID_STREAM_GROUP_COMPONENTS, SECTION_ID_STREAM_GROUP_STREAMS, -1 } },
+    [SECTION_ID_STREAM_GROUP_STREAM_SIDE_DATA_LIST] = { SECTION_ID_STREAM_GROUP_STREAM_SIDE_DATA_LIST, "side_data_list", AV_TEXTFORMAT_SECTION_FLAG_IS_ARRAY, { SECTION_ID_STREAM_GROUP_STREAM_SIDE_DATA, -1 }, .element_name = "side_data", .unique_name = "stream_group_stream_side_data_list" },
+    [SECTION_ID_STREAM_GROUP_STREAM_SIDE_DATA] =      { SECTION_ID_STREAM_GROUP_STREAM_SIDE_DATA, "side_data", AV_TEXTFORMAT_SECTION_FLAG_HAS_TYPE|AV_TEXTFORMAT_SECTION_FLAG_HAS_VARIABLE_FIELDS, { SECTION_ID_STREAM_GROUP_STREAM_SIDE_DATA_COMPONENT_LIST, -1 }, .unique_name = "stream_group_stream_side_data", .element_name = "side_datum", .get_type = get_packet_side_data_type },
+    [SECTION_ID_STREAM_GROUP_STREAM_SIDE_DATA_COMPONENT_LIST] = { SECTION_ID_STREAM_GROUP_STREAM_SIDE_DATA_COMPONENT_LIST, "components", AV_TEXTFORMAT_SECTION_FLAG_IS_ARRAY, { SECTION_ID_STREAM_GROUP_STREAM_SIDE_DATA_COMPONENT, -1 }, .element_name = "component", .unique_name = "stream_group_stream_side_data_components" },
+    [SECTION_ID_STREAM_GROUP_STREAM_SIDE_DATA_COMPONENT] =      { SECTION_ID_STREAM_GROUP_STREAM_SIDE_DATA_COMPONENT, "component", AV_TEXTFORMAT_SECTION_FLAG_HAS_VARIABLE_FIELDS|AV_TEXTFORMAT_SECTION_FLAG_HAS_TYPE, { -1 }, .unique_name = "stream_group_stream_side_data_component", .element_name = "component_entry", .get_type = get_raw_string_type },
+    [SECTION_ID_STREAM_GROUP] =                    { SECTION_ID_STREAM_GROUP, "stream_group", 0, { SECTION_ID_STREAM_GROUP_TAGS, SECTION_ID_STREAM_GROUP_DISPOSITION, SECTION_ID_STREAM_GROUP_SIDE_DATA_LIST, SECTION_ID_STREAM_GROUP_COMPONENTS, SECTION_ID_STREAM_GROUP_STREAMS, SECTION_ID_STREAM_GROUP_STREAM_GROUPS, -1 } },
     [SECTION_ID_STREAM_GROUP_COMPONENTS] =         { SECTION_ID_STREAM_GROUP_COMPONENTS, "components", AV_TEXTFORMAT_SECTION_FLAG_IS_ARRAY, { SECTION_ID_STREAM_GROUP_COMPONENT, -1 }, .element_name = "component", .unique_name = "stream_group_components" },
-    [SECTION_ID_STREAM_GROUP_COMPONENT] =          { SECTION_ID_STREAM_GROUP_COMPONENT, "component", AV_TEXTFORMAT_SECTION_FLAG_HAS_VARIABLE_FIELDS|AV_TEXTFORMAT_SECTION_FLAG_HAS_TYPE, { SECTION_ID_STREAM_GROUP_SIDE_DATA_LIST, SECTION_ID_STREAM_GROUP_SUBCOMPONENTS, -1 }, .unique_name = "stream_group_component", .element_name = "component_entry", .get_type = get_stream_group_type },
+    [SECTION_ID_STREAM_GROUP_COMPONENT] =          { SECTION_ID_STREAM_GROUP_COMPONENT, "component", AV_TEXTFORMAT_SECTION_FLAG_HAS_VARIABLE_FIELDS|AV_TEXTFORMAT_SECTION_FLAG_HAS_TYPE, { SECTION_ID_STREAM_GROUP_SUBCOMPONENTS, -1 }, .unique_name = "stream_group_component", .element_name = "component_entry", .get_type = get_stream_group_type },
     [SECTION_ID_STREAM_GROUP_SUBCOMPONENTS] =      { SECTION_ID_STREAM_GROUP_SUBCOMPONENTS, "subcomponents", AV_TEXTFORMAT_SECTION_FLAG_IS_ARRAY, { SECTION_ID_STREAM_GROUP_SUBCOMPONENT, -1 }, .element_name = "component" },
     [SECTION_ID_STREAM_GROUP_SUBCOMPONENT] =       { SECTION_ID_STREAM_GROUP_SUBCOMPONENT, "subcomponent", AV_TEXTFORMAT_SECTION_FLAG_HAS_VARIABLE_FIELDS|AV_TEXTFORMAT_SECTION_FLAG_HAS_TYPE, { SECTION_ID_STREAM_GROUP_PIECES, -1 }, .element_name = "subcomponent_entry", .get_type = get_raw_string_type },
     [SECTION_ID_STREAM_GROUP_PIECES] =             { SECTION_ID_STREAM_GROUP_PIECES, "pieces", AV_TEXTFORMAT_SECTION_FLAG_IS_ARRAY, { SECTION_ID_STREAM_GROUP_PIECE, -1 }, .element_name = "piece", .unique_name = "stream_group_pieces" },
@@ -311,9 +342,13 @@ static const AVTextFormatSection sections[] = {
     [SECTION_ID_STREAM_GROUP_BLOCKS] =             { SECTION_ID_STREAM_GROUP_BLOCKS, "blocks", AV_TEXTFORMAT_SECTION_FLAG_IS_ARRAY, { SECTION_ID_STREAM_GROUP_BLOCK, -1 }, .element_name = "block" },
     [SECTION_ID_STREAM_GROUP_BLOCK] =              { SECTION_ID_STREAM_GROUP_BLOCK, "block", AV_TEXTFORMAT_SECTION_FLAG_HAS_VARIABLE_FIELDS|AV_TEXTFORMAT_SECTION_FLAG_HAS_TYPE, { -1 }, .element_name = "block_entry", .get_type = get_raw_string_type },
     [SECTION_ID_STREAM_GROUP_SIDE_DATA_LIST] =     { SECTION_ID_STREAM_GROUP_SIDE_DATA_LIST, "side_data_list", AV_TEXTFORMAT_SECTION_FLAG_IS_ARRAY, { SECTION_ID_STREAM_GROUP_SIDE_DATA, -1 }, .element_name = "side_data", .unique_name = "stream_group_side_data_list" },
-    [SECTION_ID_STREAM_GROUP_SIDE_DATA] =          { SECTION_ID_STREAM_GROUP_SIDE_DATA, "side_data", AV_TEXTFORMAT_SECTION_FLAG_HAS_TYPE|AV_TEXTFORMAT_SECTION_FLAG_HAS_VARIABLE_FIELDS, { -1 }, .unique_name = "stream_group_side_data", .element_name = "side_datum", .get_type = get_packet_side_data_type },
+    [SECTION_ID_STREAM_GROUP_SIDE_DATA] =          { SECTION_ID_STREAM_GROUP_SIDE_DATA, "side_data", AV_TEXTFORMAT_SECTION_FLAG_HAS_TYPE|AV_TEXTFORMAT_SECTION_FLAG_HAS_VARIABLE_FIELDS, { SECTION_ID_STREAM_GROUP_SIDE_DATA_COMPONENT_LIST, -1 }, .unique_name = "stream_group_side_data", .element_name = "side_datum", .get_type = get_packet_side_data_type },
+    [SECTION_ID_STREAM_GROUP_SIDE_DATA_COMPONENT_LIST] = { SECTION_ID_STREAM_GROUP_SIDE_DATA_COMPONENT_LIST, "components", AV_TEXTFORMAT_SECTION_FLAG_IS_ARRAY, { SECTION_ID_STREAM_GROUP_SIDE_DATA_COMPONENT, -1 }, .element_name = "component", .unique_name = "stream_group_side_data_components" },
+    [SECTION_ID_STREAM_GROUP_SIDE_DATA_COMPONENT] =      { SECTION_ID_STREAM_GROUP_SIDE_DATA_COMPONENT, "component", AV_TEXTFORMAT_SECTION_FLAG_HAS_VARIABLE_FIELDS|AV_TEXTFORMAT_SECTION_FLAG_HAS_TYPE, { -1 }, .unique_name = "stream_group_side_data_component", .element_name = "component_entry", .get_type = get_raw_string_type },
     [SECTION_ID_STREAM_GROUP_STREAMS] =            { SECTION_ID_STREAM_GROUP_STREAMS, "streams", AV_TEXTFORMAT_SECTION_FLAG_IS_ARRAY, { SECTION_ID_STREAM_GROUP_STREAM, -1 }, .unique_name = "stream_group_streams" },
-    [SECTION_ID_STREAM_GROUP_STREAM] =             { SECTION_ID_STREAM_GROUP_STREAM, "stream", 0, { SECTION_ID_STREAM_GROUP_STREAM_DISPOSITION, SECTION_ID_STREAM_GROUP_STREAM_TAGS, -1 }, .unique_name = "stream_group_stream" },
+    [SECTION_ID_STREAM_GROUP_STREAM] =             { SECTION_ID_STREAM_GROUP_STREAM, "stream", 0, { SECTION_ID_STREAM_GROUP_STREAM_DISPOSITION, SECTION_ID_STREAM_GROUP_STREAM_TAGS, SECTION_ID_STREAM_GROUP_STREAM_SIDE_DATA_LIST, -1 }, .unique_name = "stream_group_stream" },
+    [SECTION_ID_STREAM_GROUP_STREAM_GROUPS] =      { SECTION_ID_STREAM_GROUP_STREAM_GROUPS, "stream_groups", AV_TEXTFORMAT_SECTION_FLAG_IS_ARRAY, { SECTION_ID_STREAM_GROUP_STREAM_GROUP, -1 }, .unique_name = "stream_group_stream_groups" },
+    [SECTION_ID_STREAM_GROUP_STREAM_GROUP] =       { SECTION_ID_STREAM_GROUP_STREAM_GROUP, "stream_group", 0, { SECTION_ID_STREAM_GROUP_STREAM_GROUP_DISPOSITION, SECTION_ID_STREAM_GROUP_STREAM_GROUP_TAGS, -1 }, .unique_name = "stream_group_stream_group" },
     [SECTION_ID_STREAM_GROUP_DISPOSITION] =        { SECTION_ID_STREAM_GROUP_DISPOSITION, "disposition", 0, { -1 }, .unique_name = "stream_group_disposition" },
     [SECTION_ID_STREAM_GROUP_TAGS] =               { SECTION_ID_STREAM_GROUP_TAGS, "tags", AV_TEXTFORMAT_SECTION_FLAG_HAS_VARIABLE_FIELDS, { -1 }, .element_name = "tag", .unique_name = "stream_group_tags" },
     [SECTION_ID_STREAM_GROUPS] =                   { SECTION_ID_STREAM_GROUPS, "stream_groups", AV_TEXTFORMAT_SECTION_FLAG_IS_ARRAY, { SECTION_ID_STREAM_GROUP, -1 } },
@@ -326,7 +361,9 @@ static const AVTextFormatSection sections[] = {
     [SECTION_ID_STREAM_DISPOSITION] = { SECTION_ID_STREAM_DISPOSITION, "disposition", 0, { -1 }, .unique_name = "stream_disposition" },
     [SECTION_ID_STREAM_TAGS] =        { SECTION_ID_STREAM_TAGS, "tags", AV_TEXTFORMAT_SECTION_FLAG_HAS_VARIABLE_FIELDS, { -1 }, .element_name = "tag", .unique_name = "stream_tags" },
     [SECTION_ID_STREAM_SIDE_DATA_LIST] ={ SECTION_ID_STREAM_SIDE_DATA_LIST, "side_data_list", AV_TEXTFORMAT_SECTION_FLAG_IS_ARRAY, { SECTION_ID_STREAM_SIDE_DATA, -1 }, .element_name = "side_data", .unique_name = "stream_side_data_list" },
-    [SECTION_ID_STREAM_SIDE_DATA] =     { SECTION_ID_STREAM_SIDE_DATA, "side_data", AV_TEXTFORMAT_SECTION_FLAG_HAS_TYPE|AV_TEXTFORMAT_SECTION_FLAG_HAS_VARIABLE_FIELDS, { -1 }, .unique_name = "stream_side_data", .element_name = "side_datum", .get_type = get_packet_side_data_type },
+    [SECTION_ID_STREAM_SIDE_DATA] =     { SECTION_ID_STREAM_SIDE_DATA, "side_data", AV_TEXTFORMAT_SECTION_FLAG_HAS_TYPE|AV_TEXTFORMAT_SECTION_FLAG_HAS_VARIABLE_FIELDS, { SECTION_ID_STREAM_SIDE_DATA_COMPONENT_LIST, -1 }, .unique_name = "stream_side_data", .element_name = "side_datum", .get_type = get_packet_side_data_type },
+    [SECTION_ID_STREAM_SIDE_DATA_COMPONENT_LIST] = { SECTION_ID_STREAM_SIDE_DATA_COMPONENT_LIST, "components", AV_TEXTFORMAT_SECTION_FLAG_IS_ARRAY, { SECTION_ID_STREAM_SIDE_DATA_COMPONENT, -1 }, .element_name = "component", .unique_name = "stream_side_data_components" },
+    [SECTION_ID_STREAM_SIDE_DATA_COMPONENT] =      { SECTION_ID_STREAM_SIDE_DATA_COMPONENT, "component", AV_TEXTFORMAT_SECTION_FLAG_HAS_VARIABLE_FIELDS|AV_TEXTFORMAT_SECTION_FLAG_HAS_TYPE, { -1 }, .unique_name = "stream_side_data_component", .element_name = "component_entry", .get_type = get_raw_string_type },
     [SECTION_ID_SUBTITLE] =           { SECTION_ID_SUBTITLE, "subtitle", 0, { -1 } },
 };
 
@@ -966,6 +1003,35 @@ static void print_ambient_viewing_environment(AVTextFormatContext *tfc,
     print_q("ambient_light_y",     env->ambient_light_y,     '/');
 }
 
+static void print_gain_map_params(AVTextFormatContext *tfc,
+                                  const AVGainMapParams *p)
+{
+    const char *const channel_names[] = { "R", "G", "B" };
+
+    print_int("version", p->version);
+    print_int("use_base_color_space", p->use_base_color_space);
+    print_q("base_hdr_headroom", p->base_hdr_headroom, '/');
+    print_q("alternate_hdr_headroom", p->alternate_hdr_headroom, '/');
+    if (!(p->nb_channels == 1 || p->nb_channels == 3))
+        return;
+
+    avtext_print_section_header(tfc, NULL, SECTION_ID_FRAME_SIDE_DATA_COMPONENT_LIST);
+    for (int c = 0; c < p->nb_channels; c++) {
+        const struct AVGainMapChannel *ch = &p->channels[c];
+        const char *comp_name = p->nb_channels == 1 ? "RGB" : channel_names[c];
+        avtext_print_section_header(tfc, comp_name, SECTION_ID_FRAME_SIDE_DATA_COMPONENT);
+        print_q("gain_map_min",     ch->gain_map_min,     '/');
+        print_q("gain_map_max",     ch->gain_map_max,     '/');
+        print_q("gamma",            ch->gamma,            '/');
+        print_q("base_offset",      ch->base_offset,      '/');
+        print_q("alternate_offset", ch->alternate_offset, '/');
+        // SECTION_ID_FRAME_SIDE_DATA_COMPONENT
+        avtext_print_section_footer(tfc);
+    }
+    // SECTION_ID_FRAME_SIDE_DATA_COMPONENT_LIST
+    avtext_print_section_footer(tfc);
+}
+
 static void print_film_grain_params(AVTextFormatContext *tfc,
                                     const AVFilmGrainParams *fgp)
 {
@@ -1092,15 +1158,43 @@ static void print_film_grain_params(AVTextFormatContext *tfc,
     av_bprint_finalize(&pbuf, NULL);
 }
 
+#define PKT_SIDE_DATA_IN_STREAM 1
+#define PKT_SIDE_DATA_IN_STREAM_GROUP 2
+#define PKT_SIDE_DATA_IN_STREAM_GROUP_STREAM 3
+#define PKT_SIDE_DATA_IN_PROGRAM_STREAM 4
+
 static void print_pkt_side_data(AVTextFormatContext *tfc,
                                 int width,
                                 int height,
                                 const AVPacketSideData *sd,
-                                SectionID id_data)
+                                int container)
 {
     const char *name = av_packet_side_data_name(sd->type);
+    const SectionID section_header[] = {
+        SECTION_ID_PACKET_SIDE_DATA,
+        SECTION_ID_STREAM_SIDE_DATA,
+        SECTION_ID_STREAM_GROUP_SIDE_DATA,
+        SECTION_ID_STREAM_GROUP_STREAM_SIDE_DATA,
+        SECTION_ID_PROGRAM_STREAM_SIDE_DATA,
+    };
+    const SectionID section_component_list[] = {
+        SECTION_ID_PACKET_SIDE_DATA_COMPONENT_LIST,
+        SECTION_ID_STREAM_SIDE_DATA_COMPONENT_LIST,
+        SECTION_ID_STREAM_GROUP_SIDE_DATA_COMPONENT_LIST,
+        SECTION_ID_STREAM_GROUP_STREAM_SIDE_DATA_COMPONENT_LIST,
+        SECTION_ID_PROGRAM_STREAM_SIDE_DATA_COMPONENT_LIST,
+    };
+    const SectionID section_component[] = {
+        SECTION_ID_PACKET_SIDE_DATA_COMPONENT,
+        SECTION_ID_STREAM_SIDE_DATA_COMPONENT,
+        SECTION_ID_STREAM_GROUP_SIDE_DATA_COMPONENT,
+        SECTION_ID_STREAM_GROUP_STREAM_SIDE_DATA_COMPONENT,
+        SECTION_ID_PROGRAM_STREAM_SIDE_DATA_COMPONENT,
+    };
 
-    avtext_print_section_header(tfc, sd, id_data);
+    av_assert0(container < FF_ARRAY_ELEMS(section_header));
+
+    avtext_print_section_header(tfc, sd, section_header[container]);
     print_str("side_data_type", name ? name : "unknown");
     if (sd->type == AV_PKT_DATA_DISPLAYMATRIX && sd->size >= 9*4) {
         print_displaymatrix(tfc, (const int32_t*)sd->data);
@@ -1195,7 +1289,30 @@ static void print_pkt_side_data(AVTextFormatContext *tfc,
         print_int("block_additional_id", AV_RB64(sd->data));
         if (do_show_data)
             avtext_print_data(tfc, "block_additional_data", sd->data + 8, sd->size - 8);
+    } else if (sd->type == AV_PKT_DATA_GAIN_MAP_PARAMS) {
+        const AVGainMapParams *gain = (AVGainMapParams *)sd->data;
+        print_int("version", gain->version);
+        print_int("use_base_color_space", gain->use_base_color_space);
+        print_q("base_hdr_headroom", gain->base_hdr_headroom, '/');
+        print_q("alternate_hdr_headroom", gain->alternate_hdr_headroom, '/');
+        print_int("nb_channels", gain->nb_channels);
+
+        av_assert0(container < FF_ARRAY_ELEMS(section_component_list) &&
+                   container < FF_ARRAY_ELEMS(section_component));
+        avtext_print_section_header(tfc, NULL, section_component_list[container]);
+        for (int c = 0; c < gain->nb_channels; c++) {
+            const struct AVGainMapChannel *channel = &gain->channels[c];
+            avtext_print_section_header(tfc, "Gain Map Channel", section_component[container]);
+            print_q("gain_map_min", channel->gain_map_min, '/');
+            print_q("gain_map_max", channel->gain_map_max, '/');
+            print_q("gamma", channel->gamma, '/');
+            print_q("base_offset", channel->base_offset, '/');
+            print_q("alternate_offset", channel->alternate_offset, '/');
+            avtext_print_section_footer(tfc);
+        }
+        avtext_print_section_footer(tfc);
     }
+    avtext_print_section_footer(tfc);
 }
 
 static void print_private_data(AVTextFormatContext *tfc, void *priv_data)
@@ -1391,9 +1508,7 @@ static void show_packet(AVTextFormatContext *tfc, InputFile *ifile, AVPacket *pk
 
         avtext_print_section_header(tfc, NULL, SECTION_ID_PACKET_SIDE_DATA_LIST);
         for (int i = 0; i < pkt->side_data_elems; i++) {
-            print_pkt_side_data(tfc, st->codecpar->width, st->codecpar->height, &pkt->side_data[i],
-                                SECTION_ID_PACKET_SIDE_DATA);
-            avtext_print_section_footer(tfc);
+            print_pkt_side_data(tfc, st->codecpar->width, st->codecpar->height, &pkt->side_data[i], 0);
         }
         avtext_print_section_footer(tfc);
     }
@@ -1490,6 +1605,9 @@ static void print_frame_side_data(AVTextFormatContext *tfc,
         } else if (sd->type == AV_FRAME_DATA_FILM_GRAIN_PARAMS) {
             AVFilmGrainParams *fgp = (AVFilmGrainParams *)sd->data;
             print_film_grain_params(tfc, fgp);
+        } else if (sd->type == AV_FRAME_DATA_GAIN_MAP_PARAMS &&
+                   sd->size >= sizeof(AVGainMapParams)) {
+            print_gain_map_params(tfc, (const AVGainMapParams *)sd->data);
         } else if (sd->type == AV_FRAME_DATA_VIEW_ID) {
             print_int("view_id", *(int*)sd->data);
         } else if (sd->type == AV_FRAME_DATA_EXIF) {
@@ -1888,6 +2006,16 @@ static int show_stream(AVTextFormatContext *tfc, AVFormatContext *fmt_ctx, int s
         SECTION_ID_PROGRAM_STREAM_TAGS,
         SECTION_ID_STREAM_GROUP_STREAM_TAGS,
     };
+    const SectionID section_side_data[] = {
+        SECTION_ID_STREAM_SIDE_DATA_LIST,
+        SECTION_ID_PROGRAM_STREAM_SIDE_DATA_LIST,
+        SECTION_ID_STREAM_GROUP_STREAM_SIDE_DATA_LIST,
+    };
+    const SectionID container_side_data[] = {
+        PKT_SIDE_DATA_IN_STREAM,
+        PKT_SIDE_DATA_IN_PROGRAM_STREAM,
+        PKT_SIDE_DATA_IN_STREAM_GROUP_STREAM,
+    };
     int ret = 0;
     const char *profile = NULL;
 
@@ -2009,6 +2137,7 @@ static int show_stream(AVTextFormatContext *tfc, AVFormatContext *fmt_ctx, int s
         print_int("bits_per_sample", av_get_bits_per_sample(par->codec_id));
 
         print_int("initial_padding", par->initial_padding);
+        print_int("seek_preroll", par->seek_preroll);
         break;
 
     case AVMEDIA_TYPE_SUBTITLE:
@@ -2075,11 +2204,12 @@ static int show_stream(AVTextFormatContext *tfc, AVFormatContext *fmt_ctx, int s
     }
 
     if (stream->codecpar->nb_coded_side_data) {
-        avtext_print_section_header(tfc, NULL, SECTION_ID_STREAM_SIDE_DATA_LIST);
+        av_assert0(container < FF_ARRAY_ELEMS(section_tags) &&
+                   container < FF_ARRAY_ELEMS(container_side_data));
+        avtext_print_section_header(tfc, NULL, section_side_data[container]);
         for (int i = 0; i < stream->codecpar->nb_coded_side_data; i++) {
             print_pkt_side_data(tfc, stream->codecpar->width, stream->codecpar->height, &stream->codecpar->coded_side_data[i],
-                                SECTION_ID_STREAM_SIDE_DATA);
-            avtext_print_section_footer(tfc);
+                                container_side_data[container]);
         }
         avtext_print_section_footer(tfc);
     }
@@ -2177,15 +2307,6 @@ static void print_tile_grid_params(AVTextFormatContext *tfc, const AVStreamGroup
         avtext_print_section_footer(tfc);
     }
     avtext_print_section_footer(tfc);
-    if (tile_grid->nb_coded_side_data) {
-        avtext_print_section_header(tfc, NULL, SECTION_ID_STREAM_GROUP_SIDE_DATA_LIST);
-        for (int i = 0; i < tile_grid->nb_coded_side_data; i++) {
-            print_pkt_side_data(tfc, tile_grid->width, tile_grid->height, &tile_grid->coded_side_data[i],
-                                SECTION_ID_STREAM_GROUP_SIDE_DATA);
-            avtext_print_section_footer(tfc);
-        }
-        avtext_print_section_footer(tfc);
-    }
     avtext_print_section_footer(tfc);
 }
 
@@ -2362,50 +2483,132 @@ static void print_iamf_mix_presentation_params(AVTextFormatContext *tfc, const A
     avtext_print_section_footer(tfc); // SECTION_ID_STREAM_GROUP_COMPONENT
 }
 
+static void print_layered_video_params(AVTextFormatContext *tfc, const AVStreamGroup *stg,
+                                       const AVStreamGroupLayeredVideo *layered_video)
+{
+    avtext_print_section_header(tfc, stg, SECTION_ID_STREAM_GROUP_COMPONENT);
+    print_int("el_index", layered_video->el_index);
+    print_int("width", layered_video->width);
+    print_int("height", layered_video->height);
+    avtext_print_section_footer(tfc); // SECTION_ID_STREAM_GROUP_COMPONENT
+}
+
 static void print_stream_group_params(AVTextFormatContext *tfc, AVStreamGroup *stg)
 {
     avtext_print_section_header(tfc, NULL, SECTION_ID_STREAM_GROUP_COMPONENTS);
-    if (stg->type == AV_STREAM_GROUP_PARAMS_TILE_GRID)
-        print_tile_grid_params(tfc, stg, stg->params.tile_grid);
-    else if (stg->type == AV_STREAM_GROUP_PARAMS_IAMF_AUDIO_ELEMENT)
-        print_iamf_audio_element_params(tfc, stg, stg->params.iamf_audio_element);
-    else if (stg->type == AV_STREAM_GROUP_PARAMS_IAMF_MIX_PRESENTATION)
-        print_iamf_mix_presentation_params(tfc, stg, stg->params.iamf_mix_presentation);
+    switch (stg->type) {
+    case AV_STREAM_GROUP_PARAMS_TILE_GRID:
+        print_tile_grid_params(tfc, stg, stg->params.tile_grid); break;
+    case AV_STREAM_GROUP_PARAMS_IAMF_AUDIO_ELEMENT:
+        print_iamf_audio_element_params(tfc, stg, stg->params.iamf_audio_element); break;
+    case AV_STREAM_GROUP_PARAMS_IAMF_MIX_PRESENTATION:
+        print_iamf_mix_presentation_params(tfc, stg, stg->params.iamf_mix_presentation); break;
+    case AV_STREAM_GROUP_PARAMS_LCEVC:
+    case AV_STREAM_GROUP_PARAMS_DOLBY_VISION:
+    case AV_STREAM_GROUP_PARAMS_GAIN_MAP:
+        print_layered_video_params(tfc, stg, stg->params.layered_video); break;
+    }
     avtext_print_section_footer(tfc); // SECTION_ID_STREAM_GROUP_COMPONENTS
 }
 
-static int show_stream_group(AVTextFormatContext *tfc, InputFile *ifile, AVStreamGroup *stg)
+static int show_stream_group(AVTextFormatContext *tfc, InputFile *ifile, AVStreamGroup *stg, int container)
 {
     AVFormatContext *fmt_ctx = ifile->fmt_ctx;
     AVBPrint pbuf;
+    const SectionID section_header[] = {
+        SECTION_ID_STREAM_GROUP,
+        SECTION_ID_STREAM_GROUP_STREAM_GROUP,
+        SECTION_ID_STREAM_GROUP_STREAM_GROUP,
+    };
+    const SectionID section_disposition[] = {
+        SECTION_ID_STREAM_GROUP_DISPOSITION,
+        SECTION_ID_STREAM_GROUP_STREAM_GROUP_DISPOSITION,
+        SECTION_ID_STREAM_GROUP_STREAM_GROUP_DISPOSITION,
+    };
+    const SectionID section_tags[] = {
+        SECTION_ID_STREAM_GROUP_TAGS,
+        SECTION_ID_STREAM_GROUP_STREAM_GROUP_TAGS,
+        SECTION_ID_STREAM_GROUP_STREAM_GROUP_TAGS,
+    };
     int ret = 0;
 
+    av_assert0(container < FF_ARRAY_ELEMS(section_header));
+
     av_bprint_init(&pbuf, 1, AV_BPRINT_SIZE_UNLIMITED);
-    avtext_print_section_header(tfc, NULL, SECTION_ID_STREAM_GROUP);
+    avtext_print_section_header(tfc, NULL, section_header[container]);
     print_int("index", stg->index);
     if (fmt_ctx->iformat->flags & AVFMT_SHOW_IDS) print_fmt    ("id", "0x%"PRIx64, stg->id);
     else                                          print_str_opt("id", "N/A");
-    print_int("nb_streams", stg->nb_streams);
+    print_int("nb_streams", stg->nb_entries);
     if (stg->type != AV_STREAM_GROUP_PARAMS_NONE)
         print_str("type", av_x_if_null(avformat_stream_group_name(stg->type), "unknown"));
     else
         print_str_opt("type", "unknown");
+
+    if (container)
+        goto end;
+
     if (do_show_stream_group_components)
         print_stream_group_params(tfc, stg);
 
     /* Print disposition information */
-    if (do_show_stream_group_disposition)
-        print_dispositions(tfc, stg->disposition, SECTION_ID_STREAM_GROUP_DISPOSITION);
+    if (do_show_stream_group_disposition) {
+        av_assert0(container < FF_ARRAY_ELEMS(section_disposition));
+        print_dispositions(tfc, stg->disposition, section_disposition[container]);
+    }
 
-    if (do_show_stream_group_tags)
-        ret = show_tags(tfc, stg->metadata, SECTION_ID_STREAM_GROUP_TAGS);
+    if (do_show_stream_group_tags) {
+        av_assert0(container < FF_ARRAY_ELEMS(section_tags));
+        ret = show_tags(tfc, stg->metadata, section_tags[container]);
+    }
     if (ret < 0)
         goto end;
 
+    if (stg->nb_coded_side_data) {
+        int width = 0, height = 0;
+        avtext_print_section_header(tfc, NULL, SECTION_ID_STREAM_GROUP_SIDE_DATA_LIST);
+
+        switch (stg->type) {
+        case AV_STREAM_GROUP_PARAMS_TILE_GRID: {
+            const AVStreamGroupTileGrid *tile_grid = stg->params.tile_grid;
+            width = tile_grid->width;
+            height = tile_grid->height;
+            break;
+        }
+        case AV_STREAM_GROUP_PARAMS_GAIN_MAP: {
+            const AVStreamGroupLayeredVideo *layered_video = stg->params.layered_video;
+            width = layered_video->width;
+            height = layered_video->height;
+            break;
+        }
+        default:
+            break;
+        }
+        for (int i = 0; i < stg->nb_coded_side_data; i++) {
+            print_pkt_side_data(tfc, width, height, &stg->coded_side_data[i],
+                                PKT_SIDE_DATA_IN_STREAM_GROUP);
+        }
+        avtext_print_section_footer(tfc);
+    }
+
+    avtext_print_section_header(tfc, NULL, SECTION_ID_STREAM_GROUP_STREAM_GROUPS);
+    for (unsigned i = 0; i < stg->nb_entries; i++) {
+        AVStreamGroupEntry *entry = stg->entries[i];
+        if (entry->type != AV_STREAM_GROUP_ENTRY_STREAM_GROUP)
+            continue;
+        ret = show_stream_group(tfc, ifile, entry->stream_group, IN_STREAM_GROUP);
+        if (ret < 0)
+            break;
+    }
+    avtext_print_section_footer(tfc);
+
     avtext_print_section_header(tfc, NULL, SECTION_ID_STREAM_GROUP_STREAMS);
-    for (unsigned i = 0; i < stg->nb_streams; i++) {
-        if (selected_streams[stg->streams[i]->index]) {
-            ret = show_stream(tfc, fmt_ctx, stg->streams[i]->index, &ifile->streams[stg->streams[i]->index], IN_STREAM_GROUP);
+    for (unsigned i = 0; i < stg->nb_entries; i++) {
+        AVStreamGroupEntry *entry = stg->entries[i];
+        if (entry->type != AV_STREAM_GROUP_ENTRY_STREAM)
+            continue;
+        if (selected_streams[stg->entries[i]->stream->index]) {
+            ret = show_stream(tfc, fmt_ctx, entry->stream->index, &ifile->streams[entry->stream->index], IN_STREAM_GROUP);
             if (ret < 0)
                 break;
         }
@@ -2427,7 +2630,7 @@ static int show_stream_groups(AVTextFormatContext *tfc, InputFile *ifile)
     for (unsigned i = 0; i < fmt_ctx->nb_stream_groups; i++) {
         AVStreamGroup *stg = fmt_ctx->stream_groups[i];
 
-        ret = show_stream_group(tfc, ifile, stg);
+        ret = show_stream_group(tfc, ifile, stg, 0);
         if (ret < 0)
             break;
     }

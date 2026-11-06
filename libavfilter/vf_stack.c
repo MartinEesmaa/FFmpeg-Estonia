@@ -116,8 +116,11 @@ static av_cold int init(AVFilterContext *ctx)
             }
         }
 
-        if (is_grid)
+        if (is_grid) {
+            if (s->nb_grid_rows > INT_MAX / s->nb_grid_columns)
+                return AVERROR(EINVAL);
             s->nb_inputs = s->nb_grid_rows * s->nb_grid_columns;
+        }
     }
 
     s->frames = av_calloc(s->nb_inputs, sizeof(*s->frames));
@@ -148,8 +151,8 @@ static int process_slice(AVFilterContext *ctx, void *arg, int job, int nb_jobs)
     StackContext *s = ctx->priv;
     AVFrame *out = arg;
     AVFrame **in = s->frames;
-    const int start = (s->nb_inputs *  job   ) / nb_jobs;
-    const int end   = (s->nb_inputs * (job+1)) / nb_jobs;
+    const int start = ff_slice_pos(s->nb_inputs, job, nb_jobs);
+    const int end   = ff_slice_pos(s->nb_inputs, job + 1, nb_jobs);
 
     for (int i = start; i < end; i++) {
         StackItem *item = &s->items[i];

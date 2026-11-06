@@ -23,16 +23,14 @@
 #include "config.h"
 
 #include "libavutil/attributes.h"
-#include "libavutil/cpu.h"
 #include "libavutil/mem_internal.h"
-#include "libavutil/ppc/cpu.h"
 #include "libavutil/ppc/util_altivec.h"
 
 #include "libavcodec/vp8dsp.h"
 
 #include "hpeldsp_altivec.h"
+#include "vp8dsp_altivec.h"
 
-#if HAVE_ALTIVEC
 #define REPT4(...) { __VA_ARGS__, __VA_ARGS__, __VA_ARGS__, __VA_ARGS__ }
 
 // h subpel filter uses msum to multiply+add 4 pixel taps at once
@@ -326,15 +324,8 @@ static void put_vp8_pixels16_altivec(uint8_t *dst, ptrdiff_t dstride, const uint
     }
 }
 
-#endif /* HAVE_ALTIVEC */
-
-
-av_cold void ff_vp78dsp_init_ppc(VP8DSPContext *c)
+av_cold void ff_vp78dsp_init_altivec(VP8DSPContext *c)
 {
-#if HAVE_ALTIVEC
-    if (!PPC_ALTIVEC(av_get_cpu_flags()))
-        return;
-
     c->put_vp8_epel_pixels_tab[0][0][0] = put_vp8_pixels16_altivec;
     c->put_vp8_epel_pixels_tab[0][0][2] = put_vp8_epel16_h6_altivec;
     c->put_vp8_epel_pixels_tab[0][2][0] = put_vp8_epel16_v6_altivec;
@@ -359,5 +350,4 @@ av_cold void ff_vp78dsp_init_ppc(VP8DSPContext *c)
     c->put_vp8_epel_pixels_tab[2][1][1] = put_vp8_epel4_h4v4_altivec;
     c->put_vp8_epel_pixels_tab[2][1][2] = put_vp8_epel4_h6v4_altivec;
     c->put_vp8_epel_pixels_tab[2][2][1] = put_vp8_epel4_h4v6_altivec;
-#endif /* HAVE_ALTIVEC */
 }

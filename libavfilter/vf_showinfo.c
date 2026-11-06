@@ -765,22 +765,25 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame)
     FilterLink *inl = ff_filter_link(inlink);
     AVFilterContext *ctx = inlink->dst;
     ShowInfoContext *s = ctx->priv;
-    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(inlink->format);
+    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(frame->format);
     uint32_t plane_checksum[4] = {0}, checksum = 0;
     int64_t sum[4] = {0}, sum2[4] = {0};
     int32_t pixelcount[4] = {0};
     int bitdepth = desc->comp[0].depth;
     int be = desc->flags & AV_PIX_FMT_FLAG_BE;
     int i, plane, vsub = desc->log2_chroma_h;
+    int calculate_checksums = s->calculate_checksums && !(desc->flags & AV_PIX_FMT_FLAG_HWACCEL);
 
-    for (plane = 0; plane < 4 && s->calculate_checksums && frame->data[plane] && frame->linesize[plane]; plane++) {
+    for (plane = 0; plane < 4 && calculate_checksums && frame->data[plane] && frame->linesize[plane]; plane++) {
         uint8_t *data = frame->data[plane];
-        int h = plane == 1 || plane == 2 ? AV_CEIL_RSHIFT(inlink->h, vsub) : inlink->h;
+        int h = plane == 1 || plane == 2 ? AV_CEIL_RSHIFT(frame->height, vsub) : frame->height;
         int linesize = av_image_get_linesize(frame->format, frame->width, plane);
         int width = linesize >> (bitdepth > 8);
 
-        if (linesize < 0)
+        if (linesize < 0) {
+            av_frame_free(&frame);
             return linesize;
+        }
 
         for (i = 0; i < h; i++) {
             plane_checksum[plane] = av_adler32_update(plane_checksum[plane], data, linesize);
@@ -807,7 +810,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame)
            !!(frame->flags & AV_FRAME_FLAG_KEY),
            av_get_picture_type_char(frame->pict_type));
 
-    if (s->calculate_checksums) {
+    if (calculate_checksums) {
         av_log(ctx, AV_LOG_INFO,
                "checksum:%08"PRIX32" plane_checksum:[%08"PRIX32,
                checksum, plane_checksum[0]);
@@ -975,4 +978,5 @@ const FFFilter ff_vf_showinfo = {
     FILTER_INPUTS(avfilter_vf_showinfo_inputs),
     FILTER_OUTPUTS(avfilter_vf_showinfo_outputs),
     .priv_size   = sizeof(ShowInfoContext),
+    .flags_internal = FF_FILTER_FLAG_DYNAMIC_FRAME_PARAMS,
 };

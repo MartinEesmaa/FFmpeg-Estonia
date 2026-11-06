@@ -574,6 +574,9 @@ available in a metadata key named "variant_bitrate". It is unset when
 the stream is shared by variants with different bitrates. The value is
 always available in the corresponding program's metadata.
 
+The X-TIMESTAMP-MAP header of WebVTT subtitle segments is applied, so the
+cue times are on the timeline of the other renditions.
+
 It accepts the following options:
 
 @table @option
@@ -745,6 +748,30 @@ terminating with the ".png" suffix:
 ffmpeg -framerate 10 -pattern_type glob -i "*.png" out.mkv
 @end example
 @end itemize
+
+@section jpeg_mpf
+
+JPEG Multi-Picture Format demuxer.
+
+Exposes each JPEG image stored in a CIPA DC-007 MP file as a separate stream,
+in the order of the MP Entries, with the First Individual Image flagged as the
+default stream. If the file contains an ISO 21496-1 gain map, as is the case
+for JPEG Ultra HDR, the primary image and the gain map are linked by a
+@samp{gain_map} stream group, and the gain map parameters are exported as
+frame side data by the decoder.
+
+Images of any other type (e.g. large thumbnails or multi-view images) are
+exposed as additional streams.
+
+This demuxer accepts the following options, which behave like the options of
+the same name of the @samp{image2} demuxer:
+@table @option
+@item framerate
+Set the frame rate of the video streams. The default is 25.
+@item loop
+If set to 1, loop over the images in the file. The default is 0. This requires
+seekable input.
+@end table
 
 @section ktx
 
@@ -1275,6 +1302,24 @@ WebP specification says that viewer applications are not required to
 use it. If @option{usebgcolor} is set to true, then the background
 color hint will be used, otherwise transparent black will be used for
 the background. Default value is false.
+@end table
+
+@section webvtt
+
+WebVTT subtitle demuxer.
+
+It accepts the following options:
+
+@table @option
+@item kind
+Set the kind of the track: @samp{subtitles} (default), @samp{captions},
+@samp{descriptions} or @samp{metadata}.
+
+@item timestamp_map
+Apply the @code{X-TIMESTAMP-MAP} header of HLS WebVTT segments to the cue
+timestamps, which moves them onto the MPEG-TS timeline of the other
+renditions, and use the 90 kHz MPEG-TS time base for the stream. Default
+value is false.
 @end table
 
 @c man end DEMUXERS
