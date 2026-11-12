@@ -23,9 +23,9 @@
 
 #include "libavutil/intreadwrite.h"
 #include "libavutil/mem.h"
-#include "avformat.h"
-#include "internal.h"
-#include "oggdec.h"
+#include "libavformat/avformat.h"
+#include "libavformat/internal.h"
+#include "libavformat/ogg/mapping.h"
 
 /* CELT-over-Ogg streams use at most a couple of vorbiscomment "extra" headers. */
 #define CELT_MAX_EXTRA_HEADERS 16
