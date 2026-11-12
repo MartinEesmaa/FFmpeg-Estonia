@@ -474,16 +474,19 @@ static void check_simple(const char *name, const SwsUOp *uop)
     check_range(name, uop, NULL);
 }
 
-static void check_scalar(const char *name, SwsUOp *uop)
-{
-    uop->data.scalar = rndpx(uop->type);
-    check_simple(name, uop);
-}
-
 static void check_vec4(const char *name, SwsUOp *uop)
 {
     for (int i = 0; i < 4; i++)
         uop->data.vec4[i] = rndpx(uop->type);
+
+    check_simple(name, uop);
+}
+
+static void check_clear(const char *name, SwsUOp *uop)
+{
+    /* Clear values are always expanded to 32 bits, see SwsClearUOp */
+    for (int i = 0; i < 4; i++)
+        uop->data.vec4[i] = ff_sws_pixel_expand32(uop->type, rndpx(uop->type));
 
     check_simple(name, uop);
 }
@@ -529,7 +532,7 @@ static void check_filter(const char *name, SwsUOp *uop)
 
             char desc[256];
             snprintf(desc, sizeof(desc), "%s_%s_%d", name,
-                     uop->data.kernel->name, par.src_size);
+                     ff_sws_scaler_name(par.scaler), par.src_size);
 
             check_read(desc, uop);
             av_refstruct_unref(&uop->data.kernel);
@@ -708,14 +711,14 @@ void checkasm_check_sw_ops(void)
     CHECK_FOR(TO_U32,           check_cast);
     CHECK_FOR(TO_F32,           check_cast);
     CHECK_FOR(SCALE,            check_scale);
-    CHECK_FOR(ADD,              check_scalar);
+    CHECK_FOR(ADD,              check_vec4);
     CHECK_FOR(MIN,              check_vec4);
     CHECK_FOR(MAX,              check_vec4);
     CHECK_FOR(UNPACK,           check_unpack);
     CHECK_FOR(PACK,             check_pack);
     CHECK_FOR(LSHIFT,           check_simple);
     CHECK_FOR(RSHIFT,           check_simple);
-    CHECK_FOR(CLEAR,            check_vec4);
+    CHECK_FOR(CLEAR,            check_clear);
     CHECK_FOR(LINEAR,           check_linear);
     CHECK_FOR(DITHER,           check_dither);
     CHECK_FOR(LUT_3D,           check_lut_3d);

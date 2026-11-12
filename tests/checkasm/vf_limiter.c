@@ -36,14 +36,6 @@ static void check_limiter(int depth)
     declare_func(void, const uint8_t *, uint8_t *,
                  ptrdiff_t, ptrdiff_t, int, int, int, int);
 
-    memset(dst_ref, 0, HEIGHT * WIDTH_PADDED);
-    memset(dst_new, 0, HEIGHT * WIDTH_PADDED);
-    memset(src, 0, HEIGHT * WIDTH_PADDED);
-    for (int y = 0; y < HEIGHT; y++) {
-        for (int x = 0; x < WIDTH; x++)
-            src[y * WIDTH_PADDED + x] = rnd() & 0xFF;
-    }
-
     const int min =  16 << (depth - 8);
     const int max = 235 << (depth - 8);
 
@@ -51,10 +43,14 @@ static void check_limiter(int depth)
     if (depth == 16)
         w /= 2;
 
-    LimiterContext s;
+    LimiterDSPContext s;
     ff_limiter_init(&s, depth);
 
-    if (check_func(s.dsp.limiter, "limiter%d", depth)) {
+    if (check_func(s.limiter, "limiter%d", depth)) {
+        memset(dst_ref, 0, HEIGHT * WIDTH_PADDED);
+        memset(dst_new, 0, HEIGHT * WIDTH_PADDED);
+        checkasm_randomize(src, HEIGHT * WIDTH_PADDED);
+
         call_ref(src, dst_ref, WIDTH_PADDED, WIDTH_PADDED, w, HEIGHT, min, max);
         call_new(src, dst_new, WIDTH_PADDED, WIDTH_PADDED, w, HEIGHT, min, max);
 

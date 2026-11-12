@@ -3231,11 +3231,11 @@ static int mov_write_tmcd_tag(AVIOContext *pb, MOVTrack *track)
     return update_size(pb, pos);
 }
 
-static int mov_write_gpmd_tag(AVIOContext *pb, const MOVTrack *track)
+static int mov_write_bin_data_tag(AVIOContext *pb, uint32_t tag)
 {
     int64_t pos = avio_tell(pb);
     avio_wb32(pb, 0); /* size */
-    ffio_wfourcc(pb, "gpmd");
+    avio_wl32(pb, tag);
     avio_wb32(pb, 0); /* Reserved */
     avio_wb16(pb, 0); /* Reserved */
     avio_wb16(pb, 1); /* Data-reference index */
@@ -3267,7 +3267,10 @@ static int mov_write_stsd_tag(AVFormatContext *s, AVIOContext *pb, MOVMuxContext
     else if (track->par->codec_tag == MKTAG('t','m','c','d'))
         ret = mov_write_tmcd_tag(pb, track);
     else if (track->par->codec_tag == MKTAG('g','p','m','d'))
-        ret = mov_write_gpmd_tag(pb, track);
+        ret = mov_write_bin_data_tag(pb, track->par->codec_tag);
+    else if (track->tag == MOV_MP4_DJMD_TAG ||
+             track->tag == MOV_MP4_DBGI_TAG)
+        ret = mov_write_bin_data_tag(pb, track->tag);
 
     if (ret < 0)
         return ret;
@@ -3614,6 +3617,13 @@ static int mov_write_gmhd_tag(AVIOContext *pb, MOVTrack *track)
         ffio_wfourcc(pb, "gpmd");
         avio_wb32(pb, 0); /* version */
         update_size(pb, gpmd_pos);
+    } else if (track->tag == MOV_MP4_DBGI_TAG) {
+        avio_wb32(pb, 12);
+        avio_wl32(pb, MOV_MP4_DBGI_TAG);
+        avio_wb32(pb, 0);
+    } else if (track->tag == MOV_MP4_DJMD_TAG) {
+        avio_wb32(pb, 8);
+        avio_wl32(pb, MOV_MP4_DJMD_TAG);
     }
     return update_size(pb, pos);
 }
@@ -3706,6 +3716,12 @@ static int mov_write_hdlr_tag(AVFormatContext *s, AVIOContext *pb, MOVTrack *tra
         } else if (track->par->codec_tag == MKTAG('g','p','m','d')) {
             hdlr_type = "meta";
             descr = "GoPro MET"; // GoPro Metadata
+        } else if (track->tag == MOV_MP4_DJMD_TAG) {
+            hdlr_type = "meta";
+            descr = "CAM meta";
+        } else if (track->tag == MOV_MP4_DBGI_TAG) {
+            hdlr_type = "meta";
+            descr = "CAM dbgi";
         } else {
             av_log(s, AV_LOG_WARNING,
                    "Unknown hdlr_type for %s, writing dummy values\n",
@@ -3955,7 +3971,9 @@ static int mov_write_minf_tag(AVFormatContext *s, AVIOContext *pb, MOVMuxContext
             mov_write_nmhd_tag(pb);
         else
             mov_write_gmhd_tag(pb, track);
-    } else if (track->tag == MKTAG('g','p','m','d')) {
+    } else if (track->tag == MKTAG('g','p','m','d') ||
+               track->tag == MOV_MP4_DJMD_TAG ||
+               track->tag == MOV_MP4_DBGI_TAG) {
         mov_write_gmhd_tag(pb, track);
     }
     if (track->mode == MODE_MOV) /* ISO 14496-12 8.4.3.1 specifies hdlr only within mdia or meta boxes */
@@ -5205,6 +5223,9 @@ static int mov_write_udta_tag(AVIOContext *pb, MOVMuxContext *mov,
         mov_write_string_metadata(s, pb_buf, "\251nam", "title",       0);
         mov_write_string_metadata(s, pb_buf, "\251aut", "author",      0);
         mov_write_string_metadata(s, pb_buf, "\251alb", "album",       0);
+        /* mov_read_udta_string() already maps this atom back to "composer";
+         * without it a mov to mov remux dropped the tag on the floor. */
+        mov_write_string_metadata(s, pb_buf, "\251com", "composer",    0);
         mov_write_string_metadata(s, pb_buf, "\251day", "date",        0);
         mov_write_string_metadata(s, pb_buf, "\251swr", "encoder",     0);
         // currently ignored by mov.c
@@ -9510,6 +9531,8 @@ static const AVCodecTag codec_mp4_tags[] = {
     { AV_CODEC_ID_DVD_SUBTITLE,    MKTAG('m', 'p', '4', 's') },
     { AV_CODEC_ID_MOV_TEXT,        MKTAG('t', 'x', '3', 'g') },
     { AV_CODEC_ID_BIN_DATA,        MKTAG('g', 'p', 'm', 'd') },
+    { AV_CODEC_ID_BIN_DATA,        MOV_MP4_DJMD_TAG          },
+    { AV_CODEC_ID_BIN_DATA,        MOV_MP4_DBGI_TAG          },
     { AV_CODEC_ID_MPEGH_3D_AUDIO,  MKTAG('m', 'h', 'm', '1') },
     { AV_CODEC_ID_MPEGH_3D_AUDIO,  MKTAG('m', 'h', 'a', '1') },
     { AV_CODEC_ID_TTML,            MOV_MP4_TTML_TAG          },

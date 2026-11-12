@@ -34,7 +34,10 @@
 
 #include "libavutil/attributes.h"
 #include "libavutil/crc.h"
+#include "libavutil/intreadwrite.h"
+#include "libavutil/macros.h"
 #include "libavutil/mem.h"
+#include "flac.h"
 #include "flac_parse.h"
 #include "parser_internal.h"
 
@@ -101,6 +104,41 @@ typedef struct FLACParseContext {
     FLACFrameInfo last_fi;         /**< last decoded frame header info        */
     int last_fi_valid;             /**< set if last_fi is valid               */
 } FLACParseContext;
+
+/**
+ * Reject a variable-blocksize candidate when STREAMINFO declares a fixed
+ * blocksize.  This is only a sync-search check: complete container packets
+ * already have known boundaries, and their STREAMINFO can change mid-stream.
+ */
+static int flac_blocking_strategy_matches(const AVCodecContext *avctx,
+                                          const FLACFrameInfo *fi)
+{
+    const uint8_t *si = avctx->extradata;
+    int size = avctx->extradata_size;
+    int min_blocksize, max_blocksize;
+
+    /* Raw/headerless FLAC has no STREAMINFO to validate against. */
+    if (!si || size < FLAC_STREAMINFO_SIZE)
+        return 1;
+
+    /* Also accept a 4-byte marker + metadata block header before STREAMINFO. */
+    if (AV_RL32(si) == MKTAG('f', 'L', 'a', 'C')) {
+        if (size < 8 + FLAC_STREAMINFO_SIZE)
+            return 1;
+        si += 8;
+    }
+
+    min_blocksize = AV_RB16(si);
+    max_blocksize = AV_RB16(si + 2);
+    /* A fixed-blocksize stream cannot contain variable-blocksize frames.
+     * Compare the strategy bit, not the blocksize: the final frame of a
+     * fixed stream may legitimately be shorter than the declared size. */
+    if (min_blocksize && max_blocksize && min_blocksize == max_blocksize &&
+        fi->is_var_size)
+        return 0;
+
+    return 1;
+}
 
 static int frame_header_is_valid(AVCodecContext *avctx, const uint8_t *buf,
                                  FLACFrameInfo *fi)
@@ -322,7 +360,8 @@ static int find_headers_search_validate(FLACParseContext *fpc, int offset)
                                      MAX_FRAME_VERIFY_SIZE + AV_INPUT_BUFFER_PADDING_SIZE,
                                      &fpc->wrap_buf,
                                      &fpc->wrap_buf_allocated_size);
-    if (frame_header_is_valid(fpc->avctx, header_buf, &fi)) {
+    if (frame_header_is_valid(fpc->avctx, header_buf, &fi) &&
+        flac_blocking_strategy_matches(fpc->avctx, &fi)) {
         FLACHeaderMarker **end_handle = &fpc->headers, *prev = NULL;
         int i;
 
@@ -756,6 +795,21 @@ static int flac_parse(AVCodecParserContext *s, AVCodecContext *avctx,
             fpc->headers->prev = NULL;
         av_freep(&fpc->best_header);
         fpc->nb_headers_buffered--;
+
+        /* Without a child, get_best_header() already returned everything
+         * from this header to the end of the FIFO. At EOF there can be no
+         * further frames, so any header still queued is a false sync inside
+         * that frame. Drop them and drain the FIFO, or the next flush emits
+         * part of the final frame a second time. */
+        if (fpc->end_padded) {
+            for (curr = fpc->headers; curr; curr = temp) {
+                temp = curr->next;
+                av_free(curr);
+                fpc->nb_headers_buffered--;
+            }
+            fpc->headers = NULL;
+            flac_fifo_drain(&fpc->fifo_buf, flac_fifo_size(&fpc->fifo_buf));
+        }
     }
 
     /* Find and score new headers.                                     */

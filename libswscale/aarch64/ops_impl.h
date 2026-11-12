@@ -83,6 +83,32 @@ static inline int linear_num_vregs(const SwsAArch64OpImplParams *params)
 }
 
 /**
+ * Number of bytes of private data consumed by each kernel; must match what
+ * aarch64_setup() packs.
+ */
+static inline int aarch64_priv_size(const SwsAArch64OpImplParams *params)
+{
+    switch (params->uop) {
+    case SWS_UOP_READ_BIT:
+    case SWS_UOP_WRITE_BIT:
+    case SWS_UOP_CLEAR:
+    case SWS_UOP_ADD:
+    case SWS_UOP_MIN:
+    case SWS_UOP_MAX:
+        return 16; /* one full vector register */
+    case SWS_UOP_SCALE:
+        return ff_sws_pixel_type_size(params->type);
+    case SWS_UOP_LINEAR:
+    case SWS_UOP_LINEAR_FMA:
+        return 16 * linear_num_vregs(params); /* packed coefficients */
+    case SWS_UOP_DITHER:
+        return 8; /* pointer */
+    default:
+        return 0;
+    }
+}
+
+/**
  * These values will be used by ops_asmgen to access fields inside of
  * SwsOpExec and SwsOpImpl. The sizes are checked in aarch64/ops.c when
  * compiling for AArch64 to make sure there is no mismatch.
@@ -91,8 +117,8 @@ static inline int linear_num_vregs(const SwsAArch64OpImplParams *params)
 #define offsetof_exec_out       32
 #define offsetof_exec_in_bump  128
 #define offsetof_exec_out_bump 160
-#define offsetof_impl_cont       0
-#define offsetof_impl_priv      16
-#define sizeof_impl             32
+#define offsetof_impl_func       0
+#define offsetof_impl_priv       8
+#define alignof_impl             8
 
 #endif /* SWSCALE_AARCH64_OPS_IMPL_H */

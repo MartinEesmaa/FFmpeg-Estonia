@@ -37,7 +37,6 @@
 #include <stdint.h>
 
 #include "libavutil/attributes.h"
-#include "libavutil/emms.h"
 #include "libavutil/internal.h"
 #include "libavutil/intmath.h"
 #include "libavutil/mathematics.h"
@@ -1461,7 +1460,6 @@ static int skip_check(MPVMainEncContext *const m,
             }
         }
     }
-    emms_c();
 
     if (score)
         score64 = score;
@@ -2867,7 +2865,10 @@ static int mb_var_thread(AVCodecContext *c, void *arg){
     return 0;
 }
 
-static void write_slice_end(MPVEncContext *const s)
+/**
+ * @param last_mb_y row of the last coded macroblock
+ */
+static void write_slice_end(MPVEncContext *const s, int last_mb_y)
 {
     if (CONFIG_MPEG4_ENCODER && s->c.codec_id == AV_CODEC_ID_MPEG4) {
         if (s->partitioned_frame)
@@ -2876,7 +2877,7 @@ static void write_slice_end(MPVEncContext *const s)
         ff_mpeg4_stuffing(&s->pb);
     } else if ((CONFIG_MJPEG_ENCODER || CONFIG_AMV_ENCODER || CONFIG_THP_ENCODER) &&
                s->c.out_format == FMT_MJPEG) {
-        ff_mjpeg_encode_stuffing(s);
+        ff_mjpeg_encode_stuffing(s, last_mb_y);
     } else if (CONFIG_SPEEDHQ_ENCODER && s->c.out_format == FMT_SPEEDHQ) {
         ff_speedhq_end_slice(s);
     }
@@ -2936,8 +2937,6 @@ int ff_mpv_reallocate_putbitbuffer(MPVEncContext *const s, size_t threshold, siz
             av_log(s->c.avctx, AV_LOG_ERROR, "Cannot reallocate putbit buffer\n");
             return AVERROR(ENOMEM);
         }
-
-        emms_c();
 
         av_fast_padded_malloc(&new_buffer, &new_buffer_size,
                               s->c.avctx->internal->byte_buffer_size + size_increase);
@@ -3088,7 +3087,7 @@ static int encode_thread(AVCodecContext *c, void *arg){
 
                 if(is_gob_start){
                     if (s->c.start_mb_y != mb_y || mb_x != 0) {
-                        write_slice_end(s);
+                        write_slice_end(s, mb_y - !mb_x);
 
                         if (CONFIG_MPEG4_ENCODER && s->c.codec_id == AV_CODEC_ID_MPEG4 && s->partitioned_frame)
                             ff_mpeg4_init_partitions(s);
@@ -3592,7 +3591,7 @@ static int encode_thread(AVCodecContext *c, void *arg){
         ff_msmpeg4_encode_ext_header(s);
 #endif
 
-    write_slice_end(s);
+    write_slice_end(s, s->c.mb_y);
 
     return 0;
 }
@@ -3773,7 +3772,6 @@ static int encode_picture(MPVMainEncContext *const m, const AVPacket *pkt)
         merge_context_after_me(s, s->c.enc_contexts[i]);
     m->mc_mb_var_sum = s->me.mc_mb_var_sum_temp;
     m->mb_var_sum    = s->me.   mb_var_sum_temp;
-    emms_c();
 
     if (s->me.scene_change_score > m->scenechange_threshold &&
         s->c.pict_type == AV_PICTURE_TYPE_P) {
@@ -3920,7 +3918,6 @@ static int encode_picture(MPVMainEncContext *const m, const AVPacket *pkt)
             set_put_bits_buffer_size(&s->pb, FFMIN(s->c.enc_contexts[i]->pb.buf_end - s->pb.buf, INT_MAX/8-BUF_BITS));
         merge_context_after_encode(s, s->c.enc_contexts[i]);
     }
-    emms_c();
     return 0;
 }
 
@@ -4250,7 +4247,6 @@ static DECLARE_ALIGNED(16, int16_t, basis)[64][64];
 
 static void build_basis(uint8_t *perm){
     int i, j, x, y;
-    emms_c();
     for(i=0; i<8; i++){
         for(j=0; j<8; j++){
             for(y=0; y<8; y++){

@@ -47,6 +47,12 @@ FATE_MOV_FFPROBE-$(call DEMDEC, MOV, HEVC) += fate-mov-dovi-hvce-mp4-read
 
 FATE_MOV_FFPROBE-$(call DEMDEC, MOV, H264) += fate-mov-vfr-bframes-duration
 
+# vpcC set to 3/3/3, with no colr box
+FATE_MOV_FFPROBE-$(call DEMDEC, MOV, VP9) += fate-mov-vpcc-reserved-color-tags
+fate-mov-vpcc-reserved-color-tags: CMD = run ffprobe$(PROGSSUF)$(EXESUF) -v error \
+    -show_entries stream=color_primaries,color_transfer,color_space -of default=nw=1 \
+    $(TARGET_SAMPLES)/mov/vpcc-reserved-color-tags.mp4
+
 FATE_MOV_FFPROBE-$(CONFIG_MOV_DEMUXER) += fate-ffprobe-stream-entries-tmcd \
                                        fate-ffprobe-group-stream-entries-tmcd \
                                        fate-ffprobe-show-groups-tmcd
@@ -352,6 +358,12 @@ FATE_MOV_FFMPEG_SAMPLES-$(call REMUX, MP4 MOV, AAC_PARSER) \
                           += fate-mov-mp4-edst-remainder
 fate-mov-mp4-edst-remainder: CMD = stream_remux mov $(TARGET_SAMPLES)/audiomatch/tones_fdkaac_44100_stereo_aac_lc.m4a "" mp4 "" "" "-c:a copy"
 
+# A colr box can carry reserved colour values; they must not reach the stream
+FATE_MOV_FFMPEG_FFPROBE_SAMPLES-$(call REMUX, MOV, QTRLE_DECODER) += fate-mov-colr-reserved-color-tags
+fate-mov-colr-reserved-color-tags: CMD = stream_remux mov $(TARGET_SAMPLES)/qtrle/aletrek-rle.mov "" mov \
+    "-map 0:v -frames:v 1 -color_primaries 3 -color_trc 3 -colorspace 3" "" "-c:v copy" \
+    "-select_streams v -show_entries stream=color_primaries,color_transfer,color_space -of default=nw=1"
+
 # format-level branding: major_brand, minor_version, compatible_brands should be deleted on re-encode
 FATE_MOV_FFMPEG_FFPROBE_SAMPLES-$(call ENCDEC, AAC AAC, NUT MOV) += fate-mov-reenc-delete-format-metadata
 fate-mov-reenc-delete-format-metadata: CMD = transcode mov $(TARGET_SAMPLES)/cover_art/Owner-iTunes_9.0.3.15.m4a nut "-map 0:a:0 -c:a aac -bitexact -t 0.1" "-c copy -t 0.1" "-show_entries format_tags" "" "" "" null
@@ -404,6 +416,14 @@ FATE_MOV_FFMPEG-$(call TRANSCODE, RAWVIDEO, MOV, TESTSRC_FILTER SETPTS_FILTER) +
 fate-mov-vfr: CMD = md5 -filter_complex testsrc=size=2x2:duration=1,setpts=N*N:strip_fps=1 -c rawvideo -fflags +bitexact -f mov
 fate-mov-vfr: CMP = oneline
 fate-mov-vfr: REF = 1558b4a9398d8635783c93f84eb5a60d
+
+# The QuickTime user data list has to carry the composer atom the demuxer
+# already reads: without it a mov to mov remux dropped the tag.
+FATE_MOV_FFMPEG_FFPROBE-$(call TRANSCODE, PCM_S16LE, MOV, WAV_DEMUXER ARESAMPLE_FILTER) += fate-mov-composer-metadata
+fate-mov-composer-metadata: tests/data/asynth-44100-2.wav
+fate-mov-composer-metadata: CMD = transcode wav ./tests/data/asynth-44100-2.wav mov \
+    "-af aresample -c:a pcm_s16le -t 0.05 -metadata composer=Bach" \
+    "-af aresample -c:a pcm_s16le" "-show_entries format_tags"
 
 FATE_MOV_FFMPEG_FFPROBE-$(call ALLYES, COLOR_FILTER SETPTS_FILTER MPEG4_ENCODER \
                                       MOV_MUXER MOV_DEMUXER FILE_PROTOCOL)      \

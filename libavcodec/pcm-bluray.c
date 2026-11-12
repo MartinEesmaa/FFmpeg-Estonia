@@ -1,6 +1,7 @@
 /*
- * LPCM codecs for PCM format found in Blu-ray PCM streams
+ * LPCM codecs for PCM format found in Blu-ray and PAMF PCM streams
  * Copyright (c) 2009, 2013 Christian Schmidt
+ * Copyright (c) 2026 Simon Capriotti
  *
  * This file is part of FFmpeg.
  *
@@ -21,8 +22,10 @@
 
 /**
  * @file
- * PCM codec for Blu-ray PCM audio tracks
+ * PCM codec for Blu-ray and PAMF PCM audio tracks
  */
+
+#include "config_components.h"
 
 #include "libavutil/channel_layout.h"
 #include "avcodec.h"
@@ -46,84 +49,8 @@
  * 3/4+lfe  L     R    C    LS    Rls   Rrs  RS   lfe
  */
 
-/**
- * Parse the header of a LPCM frame read from a Blu-ray MPEG-TS stream
- * @param avctx the codec context
- * @param header pointer to the first four bytes of the data packet
- */
-static int pcm_bluray_parse_header(AVCodecContext *avctx,
-                                   const uint8_t *header)
-{
-    static const uint8_t bits_per_samples[4] = { 0, 16, 20, 24 };
-    static const AVChannelLayout channel_layouts[16] = {
-        { 0 },                     AV_CHANNEL_LAYOUT_MONO,     { 0 },
-        AV_CHANNEL_LAYOUT_STEREO,  AV_CHANNEL_LAYOUT_SURROUND, AV_CHANNEL_LAYOUT_2_1,
-        AV_CHANNEL_LAYOUT_4POINT0, AV_CHANNEL_LAYOUT_2_2,      AV_CHANNEL_LAYOUT_5POINT0,
-        AV_CHANNEL_LAYOUT_5POINT1, AV_CHANNEL_LAYOUT_7POINT0,  AV_CHANNEL_LAYOUT_7POINT1,
-        { 0 }, { 0 }, { 0 }, { 0 },
-    };
-    uint8_t channel_layout = header[2] >> 4;
-
-    if (avctx->debug & FF_DEBUG_PICT_INFO)
-        ff_dlog(avctx, "pcm_bluray_parse_header: header = %02x%02x%02x%02x\n",
-                header[0], header[1], header[2], header[3]);
-
-    /* get the sample depth and derive the sample format from it */
-    avctx->bits_per_coded_sample = bits_per_samples[header[3] >> 6];
-    if (!(avctx->bits_per_coded_sample == 16 || avctx->bits_per_coded_sample == 24)) {
-        av_log(avctx, AV_LOG_ERROR, "unsupported sample depth (%d)\n", avctx->bits_per_coded_sample);
-        return AVERROR_INVALIDDATA;
-    }
-    avctx->sample_fmt = avctx->bits_per_coded_sample == 16 ? AV_SAMPLE_FMT_S16
-                                                           : AV_SAMPLE_FMT_S32;
-    if (avctx->sample_fmt == AV_SAMPLE_FMT_S32)
-        avctx->bits_per_raw_sample = avctx->bits_per_coded_sample;
-
-    /* get the sample rate. Not all values are used. */
-    switch (header[2] & 0x0f) {
-    case 1:
-        avctx->sample_rate = 48000;
-        break;
-    case 4:
-        avctx->sample_rate = 96000;
-        break;
-    case 5:
-        avctx->sample_rate = 192000;
-        break;
-    default:
-        avctx->sample_rate = 0;
-        av_log(avctx, AV_LOG_ERROR, "reserved sample rate (%d)\n",
-               header[2] & 0x0f);
-        return AVERROR_INVALIDDATA;
-    }
-
-    /*
-     * get the channel number (and mapping). Not all values are used.
-     * It must be noted that the number of channels in the MPEG stream can
-     * differ from the actual meaningful number, e.g. mono audio still has two
-     * channels, one being empty.
-     */
-    av_channel_layout_uninit(&avctx->ch_layout);
-    avctx->ch_layout = channel_layouts[channel_layout];
-    if (!avctx->ch_layout.nb_channels) {
-        av_log(avctx, AV_LOG_ERROR, "reserved channel configuration (%d)\n",
-               channel_layout);
-        return AVERROR_INVALIDDATA;
-    }
-
-    avctx->bit_rate = FFALIGN(avctx->ch_layout.nb_channels, 2) * avctx->sample_rate *
-                      avctx->bits_per_coded_sample;
-
-    if (avctx->debug & FF_DEBUG_PICT_INFO)
-        ff_dlog(avctx,
-                "pcm_bluray_parse_header: %d channels, %d bits per sample, %d Hz, %"PRId64" bit/s\n",
-                avctx->ch_layout.nb_channels, avctx->bits_per_coded_sample,
-                avctx->sample_rate, avctx->bit_rate);
-    return 0;
-}
-
-static int pcm_bluray_decode_frame(AVCodecContext *avctx, AVFrame *frame,
-                                   int *got_frame_ptr, AVPacket *avpkt)
+static int decode_frame(AVCodecContext *avctx, AVFrame *frame,
+                        int *got_frame_ptr, AVPacket *avpkt)
 {
     const uint8_t *src = avpkt->data;
     int buf_size = avpkt->size;
@@ -132,16 +59,6 @@ static int pcm_bluray_decode_frame(AVCodecContext *avctx, AVFrame *frame,
     int sample_size, samples;
     int16_t *dst16;
     int32_t *dst32;
-
-    if (buf_size < 4) {
-        av_log(avctx, AV_LOG_ERROR, "PCM packet too small\n");
-        return AVERROR_INVALIDDATA;
-    }
-
-    if ((retval = pcm_bluray_parse_header(avctx, src)))
-        return retval;
-    src += 4;
-    buf_size -= 4;
 
     bytestream2_init(&gb, src, buf_size);
 
@@ -297,7 +214,103 @@ static int pcm_bluray_decode_frame(AVCodecContext *avctx, AVFrame *frame,
     if (avctx->debug & FF_DEBUG_BITSTREAM)
         ff_dlog(avctx, "pcm_bluray_decode_frame: decoded %d -> %d bytes\n",
                 retval, buf_size);
-    return retval + 4;
+    return retval;
+}
+
+#if CONFIG_PCM_BLURAY_DECODER
+
+/**
+ * Parse the header of a LPCM frame read from a Blu-ray MPEG-TS stream
+ * @param avctx the codec context
+ * @param header pointer to the first four bytes of the data packet
+ */
+static int pcm_bluray_parse_header(AVCodecContext *avctx,
+                                   const uint8_t *header)
+{
+    static const uint8_t bits_per_samples[4] = { 0, 16, 20, 24 };
+    static const AVChannelLayout channel_layouts[16] = {
+        { 0 },                     AV_CHANNEL_LAYOUT_MONO,     { 0 },
+        AV_CHANNEL_LAYOUT_STEREO,  AV_CHANNEL_LAYOUT_SURROUND, AV_CHANNEL_LAYOUT_2_1,
+        AV_CHANNEL_LAYOUT_4POINT0, AV_CHANNEL_LAYOUT_2_2,      AV_CHANNEL_LAYOUT_5POINT0,
+        AV_CHANNEL_LAYOUT_5POINT1, AV_CHANNEL_LAYOUT_7POINT0,  AV_CHANNEL_LAYOUT_7POINT1,
+        { 0 }, { 0 }, { 0 }, { 0 },
+    };
+    uint8_t channel_layout = header[2] >> 4;
+
+    if (avctx->debug & FF_DEBUG_PICT_INFO)
+        ff_dlog(avctx, "pcm_bluray_parse_header: header = %02x%02x%02x%02x\n",
+                header[0], header[1], header[2], header[3]);
+
+    /* get the sample depth and derive the sample format from it */
+    avctx->bits_per_coded_sample = bits_per_samples[header[3] >> 6];
+    if (!(avctx->bits_per_coded_sample == 16 || avctx->bits_per_coded_sample == 24)) {
+        av_log(avctx, AV_LOG_ERROR, "unsupported sample depth (%d)\n", avctx->bits_per_coded_sample);
+        return AVERROR_INVALIDDATA;
+    }
+    avctx->sample_fmt = avctx->bits_per_coded_sample == 16 ? AV_SAMPLE_FMT_S16
+                                                           : AV_SAMPLE_FMT_S32;
+    if (avctx->sample_fmt == AV_SAMPLE_FMT_S32)
+        avctx->bits_per_raw_sample = avctx->bits_per_coded_sample;
+
+    /* get the sample rate. Not all values are used. */
+    switch (header[2] & 0x0f) {
+    case 1:
+        avctx->sample_rate = 48000;
+        break;
+    case 4:
+        avctx->sample_rate = 96000;
+        break;
+    case 5:
+        avctx->sample_rate = 192000;
+        break;
+    default:
+        avctx->sample_rate = 0;
+        av_log(avctx, AV_LOG_ERROR, "reserved sample rate (%d)\n",
+               header[2] & 0x0f);
+        return AVERROR_INVALIDDATA;
+    }
+
+    /*
+     * get the channel number (and mapping). Not all values are used.
+     * It must be noted that the number of channels in the MPEG stream can
+     * differ from the actual meaningful number, e.g. mono audio still has two
+     * channels, one being empty.
+     */
+    av_channel_layout_uninit(&avctx->ch_layout);
+    avctx->ch_layout = channel_layouts[channel_layout];
+    if (!avctx->ch_layout.nb_channels) {
+        av_log(avctx, AV_LOG_ERROR, "reserved channel configuration (%d)\n",
+               channel_layout);
+        return AVERROR_INVALIDDATA;
+    }
+
+    avctx->bit_rate = FFALIGN(avctx->ch_layout.nb_channels, 2) * avctx->sample_rate *
+                      avctx->bits_per_coded_sample;
+
+    if (avctx->debug & FF_DEBUG_PICT_INFO)
+        ff_dlog(avctx,
+                "pcm_bluray_parse_header: %d channels, %d bits per sample, %d Hz, %"PRId64" bit/s\n",
+                avctx->ch_layout.nb_channels, avctx->bits_per_coded_sample,
+                avctx->sample_rate, avctx->bit_rate);
+    return 0;
+}
+
+static int pcm_bluray_decode_frame(AVCodecContext *avctx, AVFrame *frame,
+                                   int *got_frame_ptr, AVPacket *avpkt)
+{
+    int retval;
+
+    if (avpkt->size < 4) {
+        av_log(avctx, AV_LOG_ERROR, "PCM packet too small\n");
+        return AVERROR_INVALIDDATA;
+    }
+
+    if ((retval = pcm_bluray_parse_header(avctx, avpkt->data)))
+        return retval;
+
+    avpkt->data += 4;
+    avpkt->size -= 4;
+    return decode_frame(avctx, frame, got_frame_ptr, avpkt);
 }
 
 const FFCodec ff_pcm_bluray_decoder = {
@@ -308,3 +321,67 @@ const FFCodec ff_pcm_bluray_decoder = {
     FF_CODEC_DECODE_CB(pcm_bluray_decode_frame),
     .p.capabilities = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_CHANNEL_CONF,
 };
+
+#endif
+
+#if CONFIG_PCM_PAMF_DECODER
+
+static av_cold int pcm_pamf_init_decode(AVCodecContext *avctx)
+{
+    switch (avctx->bits_per_coded_sample) {
+    case 16:
+        avctx->sample_fmt = AV_SAMPLE_FMT_S16;
+        break;
+    case 20:
+    case 24:
+        avctx->sample_fmt = AV_SAMPLE_FMT_S32;
+        break;
+    default:
+        av_log(avctx, AV_LOG_FATAL, "Invalid sample depth (%d)\n",
+               avctx->bits_per_coded_sample);
+        return AVERROR(EINVAL);
+    }
+
+    avctx->bits_per_raw_sample = avctx->bits_per_coded_sample;
+
+    if (avctx->ch_layout.order != AV_CHANNEL_ORDER_NATIVE) {
+        av_log(avctx, AV_LOG_FATAL, "Invalid channel order (%X)\n",
+               avctx->ch_layout.order);
+        return AVERROR(EINVAL);
+    }
+
+    switch (avctx->ch_layout.u.mask) {
+    case AV_CH_LAYOUT_MONO:
+    case AV_CH_LAYOUT_STEREO:
+    case AV_CH_LAYOUT_SURROUND:
+    case AV_CH_LAYOUT_2_1:
+    case AV_CH_LAYOUT_4POINT0:
+    case AV_CH_LAYOUT_2_2:
+    case AV_CH_LAYOUT_5POINT0:
+    case AV_CH_LAYOUT_5POINT1:
+    case AV_CH_LAYOUT_7POINT0:
+    case AV_CH_LAYOUT_7POINT1:
+        break;
+    default:
+        av_log(avctx, AV_LOG_FATAL, "Invalid channel layout (%"PRIX64")\n",
+               avctx->ch_layout.u.mask);
+        return AVERROR(EINVAL);
+    }
+
+    avctx->bit_rate = (int64_t)FFALIGN(avctx->ch_layout.nb_channels, 2) *
+                      avctx->sample_rate *
+                      (avctx->sample_fmt == AV_SAMPLE_FMT_S16 ? 16 : 24);
+    return 0;
+}
+
+const FFCodec ff_pcm_pamf_decoder = {
+    .p.name         = "pcm_pamf",
+    CODEC_LONG_NAME("PCM signed 16|20|24-bit big-endian for PAMF streams"),
+    .p.type         = AVMEDIA_TYPE_AUDIO,
+    .p.id           = AV_CODEC_ID_PCM_PAMF,
+    .init           = pcm_pamf_init_decode,
+    FF_CODEC_DECODE_CB(decode_frame),
+    .p.capabilities = AV_CODEC_CAP_DR1,
+};
+
+#endif

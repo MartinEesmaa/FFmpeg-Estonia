@@ -621,7 +621,7 @@ static int analyze(const uint8_t *buf, int size, int packet_size,
 
     for (i = 0; i < size - 3; i++) {
         if (buf[i] == SYNC_BYTE) {
-            int pid = AV_RB16(buf+1) & 0x1FFF;
+            int pid = AV_RB16(buf + i + 1) & 0x1FFF;
             int asc = buf[i + 3] & 0x30;
             if (!probe || pid == 0x1FFF || asc) {
                 int x = i % packet_size;
@@ -3497,8 +3497,6 @@ static int mpegts_probe(const AVProbeData *p)
     ff_dlog(0, "TS score: %d %d\n", sumscore, maxscore);
 
     if        (check_count > CHECK_COUNT && sumscore > 6) {
-        return AVPROBE_SCORE_MAX   + sumscore - CHECK_COUNT;
-    } else if (check_count >= CHECK_COUNT && sumscore >= CHECK_COUNT) {
         return AVPROBE_SCORE_MAX   + sumscore - CHECK_COUNT;
     } else if (check_count >= CHECK_COUNT && sumscore > 6) {
         return AVPROBE_SCORE_MAX/2 + sumscore - CHECK_COUNT;

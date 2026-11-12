@@ -549,6 +549,7 @@ Developer options (useful when working on FFmpeg itself):
   --disable-shader-compression don't compress shader code even when possible
   --disable-resource-compression don't compress resources even when possible
   --disable-version-tracking don't include the git/release version in the build
+  --enable-asm-debug       include functions for assembly debugging
 
 NOTE: Object files are built at the place where configure is launched.
 EOF
@@ -2265,6 +2266,7 @@ CONFIG_LIST="
     $PROGRAM_LIST
     $SUBSYSTEM_LIST
     autodetect
+    asm_debug
     fontconfig
     large_tests
     linux_perf
@@ -4388,7 +4390,7 @@ avutil_extralibs="d3d11va_extralibs d3d12va_extralibs mediacodec_extralibs nanos
 ffmpeg_deps="avcodec avfilter avformat threads"
 ffmpeg_select="aformat_filter alphamerge_filter anull_filter atrim_filter crop_filter
                format_filter hflip_filter null_filter rotate_filter
-               transpose_filter trim_filter vflip_filter"
+               transpose_filter trim_filter vflip_filter xstack_filter"
 ffmpeg_suggest="ole32 psapi shell32"
 ffplay_deps="avcodec avformat avfilter swscale swresample sdl2"
 ffplay_select="crop_filter transpose_filter hflip_filter vflip_filter rotate_filter lcevc_merge_bsf"
@@ -5787,9 +5789,7 @@ elif enabled mips; then
                 enable simd_align_16
                 enable fast_64bit
                 enable fast_clz
-                enable fast_cmov
                 enable fast_unaligned
-                disable aligned_stack
                 # When gcc version less than 5.3.0, add -fno-expensive-optimizations flag.
                 if test "$cc_type" = "gcc"; then
                     case $gcc_basever in
@@ -8181,6 +8181,10 @@ check_deps $CONFIG_LIST       \
            $HAVE_LIST         \
            $ALL_COMPONENTS    \
 
+enabled_all avformat tls_protocol securetransport &&
+    ! requested securetransport && warn \
+    "Secure Transport is deprecated by Apple and does not support TLS 1.3.\nConsider configuring with --enable-gnutls or --enable-openssl instead."
+
 enabled threads || warn \
     "Threading support was disabled or is not available on the target platform." \
     "This means that not only is this build not multi-threaded, but also"    \
@@ -8286,6 +8290,7 @@ enabled ametadata_filter    && prepend avfilter_deps "avformat"
 enabled amovie_filter       && prepend avfilter_deps "avformat avcodec"
 enabled aresample_filter    && prepend avfilter_deps "swresample"
 enabled cover_rect_filter   && prepend avfilter_deps "avformat avcodec"
+enabled dnn                 && prepend avfilter_deps "avformat swscale"
 enabled ebur128_filter && enabled swresample && prepend avfilter_deps "swresample"
 enabled elbg_filter         && prepend avfilter_deps "avcodec"
 enabled find_rect_filter    && prepend avfilter_deps "avformat avcodec"

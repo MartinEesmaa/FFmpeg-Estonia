@@ -37,8 +37,9 @@ static_assert(offsetof_exec_in       == offsetof(SwsOpExec, in),       "SwsOpExe
 static_assert(offsetof_exec_out      == offsetof(SwsOpExec, out),      "SwsOpExec layout mismatch");
 static_assert(offsetof_exec_in_bump  == offsetof(SwsOpExec, in_bump),  "SwsOpExec layout mismatch");
 static_assert(offsetof_exec_out_bump == offsetof(SwsOpExec, out_bump), "SwsOpExec layout mismatch");
-static_assert(offsetof_impl_cont     == offsetof(SwsOpImpl, cont),     "SwsOpImpl layout mismatch");
+static_assert(offsetof_impl_func     == offsetof(SwsOpImpl, func),     "SwsOpImpl layout mismatch");
 static_assert(offsetof_impl_priv     == offsetof(SwsOpImpl, priv),     "SwsOpImpl layout mismatch");
+static_assert(alignof_impl           == alignof(SwsOpImpl),            "SwsOpImpl layout mismatch");
 
 /*********************************************************************/
 /* Forward-declare exported functions. */
@@ -74,9 +75,12 @@ static int aarch64_setup_linear(const SwsAArch64OpImplParams *p,
      */
     const int num_vregs = linear_num_vregs(p);
     av_assert0(num_vregs <= 4);
-    void *coeffs = av_malloc(num_vregs * 16);
-    if (!coeffs)
-        return AVERROR(ENOMEM);
+    union {
+        uint8_t  u8[4 * 16];
+        uint16_t u16[4 * 8];
+        uint32_t u32[4 * 4];
+        float    f32[4 * 4];
+    } coeffs = { 0 };
 
     /**
      * Copy non-zero coefficients, packed in sequential order, offset first.
@@ -89,26 +93,23 @@ static int aarch64_setup_linear(const SwsAArch64OpImplParams *p,
             if (!(p->par.lin.zero & SWS_MASK(i, jj))) {
                 const SwsPixel px = uop->data.mat4x5[i][jj];
                 switch (p->type) {
-                case SWS_PIXEL_U8:  ((uint8_t  *) coeffs)[i_coeff++] = px.u8;  break;
-                case SWS_PIXEL_U16: ((uint16_t *) coeffs)[i_coeff++] = px.u16; break;
-                case SWS_PIXEL_U32: ((uint32_t *) coeffs)[i_coeff++] = px.u32; break;
-                case SWS_PIXEL_F32: ((float    *) coeffs)[i_coeff++] = px.f32; break;
+                case SWS_PIXEL_U8:  coeffs.u8[i_coeff++]  = px.u8;  break;
+                case SWS_PIXEL_U16: coeffs.u16[i_coeff++] = px.u16; break;
+                case SWS_PIXEL_U32: coeffs.u32[i_coeff++] = px.u32; break;
+                case SWS_PIXEL_F32: coeffs.f32[i_coeff++] = px.f32; break;
                 }
             }
         }
     }
 
-    res->priv.ptr = coeffs;
-    res->free = ff_op_priv_free;
-
+    ff_sws_op_priv_pack(res, &coeffs, num_vregs * 16);
     return 0;
 }
 
 /*********************************************************************/
 static int aarch64_setup_dither(const SwsUOp *uop, SwsImplResult *res)
 {
-    res->priv.ptr = av_refstruct_ref(uop->data.ptr);
-    res->free = ff_op_priv_unref;
+    ff_sws_op_priv_pack_refptr(res, av_refstruct_ref(uop->data.ptr));
     return 0;
 }
 
@@ -117,28 +118,36 @@ static int aarch64_setup(const SwsUOp *uop, const SwsAArch64OpImplParams *p,
                          SwsImplResult *out)
 {
     switch (uop->uop) {
-    case SWS_UOP_READ_BIT:
+    case SWS_UOP_READ_BIT: {
         /* Negative shift values to perform right shift using ushl. */
-        out->priv = (SwsOpPriv) {
-            .u8 = {
-                -7, -6, -5, -4, -3, -2, -1, 0,
-                -7, -6, -5, -4, -3, -2, -1, 0,
-            }
+        static const int8_t shift[16] = {
+            -7, -6, -5, -4, -3, -2, -1, 0,
+            -7, -6, -5, -4, -3, -2, -1, 0,
         };
+        SWS_OP_PRIV_PACK(out, shift);
         break;
-    case SWS_UOP_WRITE_BIT:
+    }
+    case SWS_UOP_WRITE_BIT: {
         /* Shift values for ushl. */
-        out->priv = (SwsOpPriv) {
-            .u8 = {
-                7, 6, 5, 4, 3, 2, 1, 0,
-                7, 6, 5, 4, 3, 2, 1, 0,
-            }
+        static const uint8_t shift[16] = {
+            7, 6, 5, 4, 3, 2, 1, 0,
+            7, 6, 5, 4, 3, 2, 1, 0,
         };
+        SWS_OP_PRIV_PACK(out, shift);
         break;
+    }
     case SWS_UOP_CLEAR:
+    case SWS_UOP_ADD:
     case SWS_UOP_MIN:
-    case SWS_UOP_MAX:
-        return ff_sws_setup_vec4(&(const SwsImplParams) { .uop = uop }, out);
+    case SWS_UOP_MAX: {
+        int ret = ff_sws_setup_vec4(&(const SwsImplParams) { .uop = uop }, out);
+        if (ret < 0)
+            return ret;
+        /* Pad to the full vector register loaded by the kernel */
+        static const uint8_t zero[16];
+        ff_sws_op_priv_pack(out, zero, sizeof(zero) - out->priv_size);
+        return 0;
+    }
     case SWS_UOP_SCALE:
         return ff_sws_setup_scalar(&(const SwsImplParams) { .uop = uop }, out);
     case SWS_UOP_LINEAR:
@@ -169,10 +178,8 @@ static int compile_uops_aarch64(SwsContext *ctx, const SwsUOpList *uops,
     chain->cpu_flags = AV_CPU_FLAG_NEON;
 
     *out = (SwsCompiledOp) {
-        .priv        = chain,
-        .slice_align = 1,
-        .free        = ff_sws_op_chain_free_cb,
         .block_size  = block_size,
+        .slice_align = 1,
     };
 
     /* Look up kernel functions. */
@@ -188,7 +195,9 @@ static int compile_uops_aarch64(SwsContext *ctx, const SwsUOpList *uops,
         ret = aarch64_setup(&uops->ops[i], &params, &res);
         if (ret < 0)
             goto error;
-        ret = ff_sws_op_chain_append(chain, func, res.free, &res.priv);
+        av_assert1(res.priv_size == aarch64_priv_size(&params));
+        ret = ff_sws_op_chain_append(chain, func, res.ref, res.priv, res.priv_size);
+        av_refstruct_unref(&res.ref);
         if (ret < 0)
             goto error;
     }
@@ -207,8 +216,8 @@ static int compile_uops_aarch64(SwsContext *ctx, const SwsUOpList *uops,
     case 4: process_func = (SwsOpFunc) ff_sws_process_1111_neon; break;
     }
 
-    out->func      = process_func;
-    out->cpu_flags = chain->cpu_flags;
+    out->func = process_func;
+    ff_sws_op_chain_attach(chain, out);
 
     return 0;
 
@@ -225,7 +234,7 @@ static int compile_ops_aarch64(SwsContext *ctx, const SwsOpList *ops,
     if (!uops)
         return AVERROR(ENOMEM);
 
-    SwsUOpFlags flags = SWS_UOP_FLAG_PUNNING;
+    SwsUOpFlags flags = SWS_UOP_FLAG_PUNNING | SWS_UOP_FLAG_ADD;
     if (!(ctx->flags & SWS_BITEXACT))
         flags |= SWS_UOP_FLAG_FMA;
     int ret = ff_sws_ops_translate(ctx, ops, flags, uops);

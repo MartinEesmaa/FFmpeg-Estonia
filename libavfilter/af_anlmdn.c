@@ -47,6 +47,7 @@ typedef struct AudioNLMeansContext {
     int S;
     int N;
     int H;
+    int reconfigure;
 
     AVFrame *in;
     AVFrame *cache;
@@ -219,7 +220,7 @@ static int filter_channel(AVFilterContext *ctx, void *arg, int ch, int nb_jobs)
     memcpy(&src[offset], in->extended_data[ch], in->nb_samples * sizeof(float));
     memset(&src[offset + in->nb_samples], 0, (H - in->nb_samples) * sizeof(float));
 
-    for (int i = S; i < H + S; i++) {
+    for (int i = S; i < in->nb_samples + S; i++) {
         float P = 0.f, Q = 0.f;
         int v = 0;
 
@@ -302,6 +303,13 @@ static int activate(AVFilterContext *ctx)
 
     FF_FILTER_FORWARD_STATUS_BACK(outlink, inlink);
 
+    if (s->reconfigure) {
+        s->reconfigure = 0;
+        ret = config_filter(ctx);
+        if (ret < 0)
+            return ret;
+    }
+
     ret = ff_inlink_consume_samples(inlink, s->H, s->H, &in);
     if (ret < 0)
         return ret;
@@ -324,13 +332,15 @@ static int activate(AVFilterContext *ctx)
 static int process_command(AVFilterContext *ctx, const char *cmd, const char *args,
                            char *res, int res_len, int flags)
 {
+    AudioNLMeansContext *s = ctx->priv;
     int ret;
 
     ret = ff_filter_process_command(ctx, cmd, args, res, res_len, flags);
     if (ret < 0)
         return ret;
 
-    return config_filter(ctx);
+    s->reconfigure = 1;
+    return 0;
 }
 
 static av_cold void uninit(AVFilterContext *ctx)

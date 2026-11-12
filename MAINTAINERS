@@ -69,7 +69,7 @@ Trac bug tracker                    [X] (W: https://trac.ffmpeg.org) Alexander S
 Forgejo issue tracker                   (W: https://code.ffmpeg.org/FFmpeg/FFmpeg/issues)
 Patchwork                           [2] (W: https://patchwork.ffmpeg.org) Andriy Gelman
 mailing lists                           (W: https://ffmpeg.org/contact.html#MailingLists) Baptiste Coudurier
-Twitter                                 Reynaldo H. Verdejo Pinochet
+Twitter                                 Michael Niedermayer, Reynaldo H. Verdejo Pinochet
 Launchpad                               Timothy Gu
 ffmpeg-security                     [2] (L: ffmpeg-security@ffmpeg.org) (W: https://ffmpeg.org/security.html) Michael Niedermayer, Reimar Doeffinger
 YesWeHack Security reports          [2] Timo Rothenpieler, Michael Niedermayer
@@ -179,7 +179,7 @@ Codecs:
   avs2*                                 Huiwen Ren, Zhao Zhili
   bgmc.c, bgmc.h                        Thilo Borgmann
   binkaudio.c                           Peter Ross
-  cavs*                                 Stefan Gehrer
+  cavs*                                 Stefan Gehrer, Rainbaby
   celp_filters.*                        Vitor Sessak
   cinepak.c                             Roberto Togni
   cinepakenc.c                          Rl / Aetey G.T. AB
@@ -412,6 +412,7 @@ Muxers/Demuxers:
   bink.c                                Peter Ross
   boadec.c                              Michael Niedermayer
   caf*                                  Peter Ross
+  cavsvideodec.c                        Rainbaby
   codec2.c                              Tomas Härdin
   crc.c                                 Michael Niedermayer
   dashdec.c                             Steven Liu
@@ -642,10 +643,11 @@ Panagiotis Issaris            6571 13A3 33D9 3726 F728 AA98 F643 B12E ECF3 E029
 Peter Ross                    A907 E02F A6E5 0CD2 34CD 20D2 6760 79C5 AC40 DD6B
 Philip Langdale               5DC5 8D66 5FBA 3A43 18EC 045E F8D6 B194 6A75 682E
 Pierre-Anthony Lemieux (pal)  F4B3 9492 E6F2 E4AF AEC8 46CB 698F A1F0 F8D4 EED4
+Rainbaby                      4031 D805 A071 3995 A80F C1F2 DD1A A038 EAE4 6C2B
 Ramiro Polla                  7859 C65B 751B 1179 792E DAE8 8E95 8B2F 9B6C 5700
 Reimar Doeffinger             C61D 16E5 9E2C D10C 8958 38A4 0899 A2B9 06D4 D9C7
 Reinhard Tartler              9300 5DC2 7E87 6C37 ED7B CA9A 9808 3544 9453 48A4
-Reynaldo H. Verdejo Pinochet  6E27 CD34 170C C78E 4D4F 5F40 C18E 077F 3114 452A
+Reynaldo H. Verdejo Pinochet  D0CF 64C5 D138 4CBB ABEB 8178 EAB9 E4EE DD7B D64B
 Robert Swain                  EE7A 56EA 4A81 A7B5 2001 A521 67FA 362D A2FC 3E71
 Sascha Sommer                 38A0 F88B 868E 9D3A 97D4 D6A0 E823 706F 1E07 0D3C
 Sean McGovern (Sean_McG)      6D03 BC60 3A33 E615 6E2E 06AD 8C06 8175 6F59 8684
