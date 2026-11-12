@@ -183,9 +183,12 @@ static int lcevc_send_frame(FFLCEVCFrame *frame_ctx, const AVFrame *in)
     if (!sd || fmt == LCEVC_ColorFormat_Unknown || lcevc->passthrough_mode == 1)
         return 1;
 
-    res = LCEVC_SendDecoderEnhancementData(lcevc->decoder, in->pts, 0, sd->data, sd->size);
-    if (res != LCEVC_Success)
-        return AVERROR_EXTERNAL;
+    res = LCEVC_SendDecoderEnhancementData(lcevc->decoder, lcevc->last_pts,
+                                           sd->data, sd->size);
+    if (res != LCEVC_Success) {
+        ret = AVERROR_EXTERNAL;
+        goto end;
+    }
 
     ret = alloc_base_frame(lcevc, in, &base_desc, &picture);
     if (ret < 0)
@@ -198,7 +201,15 @@ static int lcevc_send_frame(FFLCEVCFrame *frame_ctx, const AVFrame *in)
         goto fail;
     }
 
-    res = LCEVC_SendDecoderBase(lcevc->decoder, in->pts, 0, picture, -1, opaque);
+    res = LCEVC_SetPictureUserData(lcevc->decoder, picture, opaque);
+    if (res != LCEVC_Success) {
+        LCEVC_FreePicture(lcevc->decoder, picture);
+        av_frame_free(&opaque);
+        ret = AVERROR_EXTERNAL;
+        goto fail;
+    }
+
+    res = LCEVC_SendDecoderBase(lcevc->decoder, lcevc->last_pts, picture, -1, opaque);
     if (res != LCEVC_Success) {
         LCEVC_FreePicture(lcevc->decoder, picture);
         av_frame_free(&opaque);
