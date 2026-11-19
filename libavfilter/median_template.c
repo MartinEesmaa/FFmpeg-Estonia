@@ -44,8 +44,8 @@
 #define fn2(a,b)   fn3(a,b)
 #define fn(a)      fn2(a, DEPTH)
 
-#define PICK_COARSE_BIN(x, y) (BINS * (x) + ((y) >> SHIFT))
-#define PICK_FINE_BIN(x, y, z) (BINS * ((x) * ((y) >> SHIFT) + (z)) + ((y) & MASK))
+#define PICK_COARSE_BIN(x, y) (BINS * (x) + (((y) >> SHIFT) & MASK))
+#define PICK_FINE_BIN(x, y, z) (BINS * ((x) * (((y) >> SHIFT) & MASK) + (z)) + ((y) & MASK))
 
 static void fn(filter_plane)(AVFilterContext *ctx, const uint8_t *ssrc, int src_linesize,
                              uint8_t *ddst, int dst_linesize, int width, int height,
@@ -61,6 +61,11 @@ static void fn(filter_plane)(AVFilterContext *ctx, const uint8_t *ssrc, int src_
     pixel *dst = (pixel *)ddst;
     const pixel *srcp;
     const pixel *p;
+#if DEPTH == 16
+    htype *coarse = s->row_coarse[jobnr];
+    htype (*fine)[BINS] = (htype (*)[BINS])s->row_fine[jobnr];
+    htype *luc = s->row_luc[jobnr];
+#endif
 
     src_linesize /= sizeof(pixel);
     dst_linesize /= sizeof(pixel);
@@ -88,9 +93,15 @@ static void fn(filter_plane)(AVFilterContext *ctx, const uint8_t *ssrc, int src_
     srcp = src;
 
     for (int i = slice_h_start; i < slice_h_end; i++) {
+#if DEPTH == 16
+        memset(coarse, 0, BINS * sizeof(*coarse));
+        memset(fine, 0, BINS * BINS * sizeof(**fine));
+        memset(luc, 0, BINS * sizeof(*luc));
+#else
         htype coarse[BINS] = { 0 };
         htype fine[BINS][BINS] = { { 0 } };
         htype luc[BINS] = { 0 };
+#endif
 
         p = srcp + src_linesize * FFMAX(0, i - radiusV - 1);
         for (int j = 0; j < width; j++) {

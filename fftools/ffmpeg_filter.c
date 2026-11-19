@@ -2821,6 +2821,7 @@ static int close_output(OutputFilterPriv *ofp, FilterGraphThread *fgt)
         fd->frame_rate_filter = ofp->fps.framerate;
 
         av_assert0(!frame->buf[0]);
+        frame->opaque = (void*)(intptr_t)FRAME_OPAQUE_EOF;
 
         av_log(ofp, AV_LOG_WARNING,
                "No filtered frames for output stream, trying to "
@@ -3181,7 +3182,7 @@ static int send_eof(FilterGraphThread *fgt, InputFilter *ifilter,
         if (ret < 0)
             return ret;
     } else {
-        if (ifp->format < 0) {
+        if (ifp->format < 0 && ifp->opts.fallback) {
             // the filtergraph was never configured, use the fallback parameters
             ifp->format                 = ifp->opts.fallback->format;
             ifp->sample_rate            = ifp->opts.fallback->sample_rate;

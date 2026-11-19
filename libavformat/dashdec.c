@@ -85,6 +85,7 @@ struct representation {
     AVFormatContext *parent;
     AVFormatContext *ctx;
     int stream_index;
+    enum AVMediaType type;
 
     char *id;
     char *lang;
@@ -1164,6 +1165,7 @@ static int parse_manifest_representation(AVFormatContext *s, const char *url,
         }
     }
 
+    rep->type = type;
     switch (type) {
     case AVMEDIA_TYPE_VIDEO:
         ret = av_dynarray_add_nofree(&c->videos, &c->n_videos, rep);
@@ -1369,6 +1371,8 @@ static int parse_manifest(AVFormatContext *s, const char *url, AVIOContext *in)
         if (!av_strcasecmp(val, "dynamic"))
             c->is_live = 1;
         xmlFree(val);
+
+        c->minimum_update_period = -1;
 
         attr = node->properties;
         while (attr) {
@@ -1602,6 +1606,7 @@ static int refresh_manifest(AVFormatContext *s)
     int n_subtitles = c->n_subtitles;
     struct representation **subtitles = c->subtitles;
     char *base_url = c->base_url;
+    int64_t minimum_update_period = c->minimum_update_period;
 
     c->base_url = NULL;
     c->n_videos = 0;
@@ -1610,6 +1615,7 @@ static int refresh_manifest(AVFormatContext *s)
     c->audios = NULL;
     c->n_subtitles = 0;
     c->subtitles = NULL;
+    c->minimum_update_period = -1;
     ret = parse_manifest(s, s->url, NULL);
     if (ret)
         goto finish;
@@ -1638,9 +1644,9 @@ static int refresh_manifest(AVFormatContext *s)
         struct representation *ccur_video = c->videos[i];
         if (cur_video->timelines && cur_video->fragment_timescale > 0) {
             // calc current time
-            int64_t currentTime = get_segment_start_time_based_on_timeline(cur_video, cur_video->cur_seq_no) / cur_video->fragment_timescale;
+            int64_t currentTime = get_segment_start_time_based_on_timeline(cur_video, cur_video->cur_seq_no);
             // update segments
-            ccur_video->cur_seq_no = calc_next_seg_no_from_timelines(ccur_video, currentTime * cur_video->fragment_timescale - 1);
+            ccur_video->cur_seq_no = calc_next_seg_no_from_timelines(ccur_video, currentTime - 1);
             if (ccur_video->cur_seq_no >= 0) {
                 move_timelines(ccur_video, cur_video, c);
             }
@@ -1654,9 +1660,9 @@ static int refresh_manifest(AVFormatContext *s)
         struct representation *ccur_audio = c->audios[i];
         if (cur_audio->timelines && cur_audio->fragment_timescale > 0) {
             // calc current time
-            int64_t currentTime = get_segment_start_time_based_on_timeline(cur_audio, cur_audio->cur_seq_no) / cur_audio->fragment_timescale;
+            int64_t currentTime = get_segment_start_time_based_on_timeline(cur_audio, cur_audio->cur_seq_no);
             // update segments
-            ccur_audio->cur_seq_no = calc_next_seg_no_from_timelines(ccur_audio, currentTime * cur_audio->fragment_timescale - 1);
+            ccur_audio->cur_seq_no = calc_next_seg_no_from_timelines(ccur_audio, currentTime - 1);
             if (ccur_audio->cur_seq_no >= 0) {
                 move_timelines(ccur_audio, cur_audio, c);
             }
@@ -1672,6 +1678,8 @@ finish:
         av_free(base_url);
     else
         c->base_url  = base_url;
+    if (ret)
+        c->minimum_update_period = minimum_update_period;
 
     if (c->subtitles)
         free_subtitle_list(c);
@@ -1726,17 +1734,70 @@ static struct fragment *get_current_fragment(struct representation *pls)
         }
     }
     if (c->is_live) {
+        int64_t reload_interval;
+        int64_t last_load;
+        int can_refresh;
+reload:
+        can_refresh = pls->timelines || pls->fragments;
+        if (can_refresh) {
+            refresh_manifest(pls->parent);
+        }
         min_seq_no = calc_min_seg_no(pls->parent, pls);
         max_seq_no = calc_max_seg_no(pls, c);
 
-        if (pls->timelines || pls->fragments) {
-            refresh_manifest(pls->parent);
-        }
-        if (pls->cur_seq_no <= min_seq_no) {
+        if (pls->cur_seq_no < min_seq_no) {
             av_log(pls->parent, AV_LOG_VERBOSE, "old fragment: cur[%"PRId64"] min[%"PRId64"] max[%"PRId64"]\n", (int64_t)pls->cur_seq_no, min_seq_no, max_seq_no);
             pls->cur_seq_no = calc_cur_seg_no(pls->parent, pls);
         } else if (pls->cur_seq_no > max_seq_no) {
             av_log(pls->parent, AV_LOG_VERBOSE, "new fragment: min[%"PRId64"] max[%"PRId64"]\n", min_seq_no, max_seq_no);
+
+            int has_negative_repeat = 0;
+            for (int i = 0; i < pls->n_timelines; i++)
+                has_negative_repeat |= pls->timelines[i]->repeat < 0;
+
+            /* Only wait if refresh can reveal new segments or finalisation:
+             * can_refresh/minimum_update_period: manifest is dynamic and still updating
+             * type: subtitles must not block audio/video
+             * n_timelines: SegmentTimeline tells us where the end is
+             * has_negative_repeat: max_seq_no cannot be derived with negative repeats
+             * fragment_timescale: needed to compute poll interval */
+            if (
+                can_refresh &&
+                c->minimum_update_period != -1 &&
+                pls->type != AVMEDIA_TYPE_SUBTITLE &&
+                pls->n_timelines &&
+                !has_negative_repeat &&
+                pls->fragment_timescale > 0
+            ) {
+                reload_count++;
+                if (reload_count > c->max_reload) {
+                    av_log(pls->parent, AV_LOG_ERROR,
+                       "Reached max manifest reloads (%d) at seq %"PRId64"\n",
+                       c->max_reload, pls->cur_seq_no);
+                    return NULL;
+                }
+
+                /* Poll at half a segment duration, falling back to the
+                 * update period, with a floor to avoid busy-looping. */
+                int64_t duration = pls->fragment_duration <= 0 ?
+                                   pls->timelines[pls->n_timelines - 1]->duration :
+                                   pls->fragment_duration;
+                reload_interval = duration > 0 ?
+                                  av_rescale(duration, AV_TIME_BASE, pls->fragment_timescale) :
+                                  c->minimum_update_period * AV_TIME_BASE;
+                reload_interval = FFMAX(reload_interval / 2, 100 * 1000);
+                if (c->minimum_update_period > 0)
+                    reload_interval = FFMIN(reload_interval,
+                                            c->minimum_update_period * AV_TIME_BASE);
+
+                last_load = av_gettime_relative();
+                while (av_gettime_relative() - last_load < reload_interval) {
+                    if (ff_check_interrupt(c->interrupt_callback))
+                        return NULL;
+                    av_usleep(100*1000);
+                }
+                goto reload;
+            }
         }
         seg = av_mallocz(sizeof(struct fragment));
         if (!seg) {
@@ -1897,7 +1958,7 @@ restart:
         free_fragment(&v->cur_seg);
         v->cur_seg = get_current_fragment(v);
         if (!v->cur_seg) {
-            ret = AVERROR_EOF;
+            ret = ff_check_interrupt(c->interrupt_callback) ? AVERROR_EXIT : AVERROR_EOF;
             goto end;
         }
 
@@ -1940,7 +2001,7 @@ restart:
         v->cur_seg = get_current_fragment(v);
     }
     if (!v->cur_seg) {
-        ret = AVERROR_EOF;
+        ret = ff_check_interrupt(c->interrupt_callback) ? AVERROR_EXIT : AVERROR_EOF;
         goto end;
     }
     ret = read_from_url(v, v->cur_seg, buf, buf_size);

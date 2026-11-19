@@ -207,6 +207,8 @@ static int FUNC(tile_header)(CodedBitstreamContext *ctx, RWContext *rw,
 
     u(16, tile_index, tile_idx, tile_idx);
 
+    if (tile_size < current->tile_header_size)
+        return AVERROR_INVALIDDATA;
     tile_size_remaining = tile_size - current->tile_header_size;
     for (int c = 0; c < priv->num_comp; c++) {
         us(32, tile_data_size[c], 1, tile_size_remaining, 1, c);
@@ -259,6 +261,8 @@ static int FUNC(tile)(CodedBitstreamContext *ctx, RWContext *rw,
 
     if (padding_size > 0) {
 #ifdef READ
+        if (get_bits_left(rw) < 8LL * padding_size)
+            return AVERROR_INVALIDDATA;
         current->tile_dummy_byte      = (uint8_t*)align_get_bits(rw);
         current->tile_dummy_byte_size = padding_size;
         skip_bits_long(rw, 8 * padding_size);

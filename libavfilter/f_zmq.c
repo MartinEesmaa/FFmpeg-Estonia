@@ -45,8 +45,8 @@ typedef struct ZMQContext {
 #define OFFSET(x) offsetof(ZMQContext, x)
 #define FLAGS AV_OPT_FLAG_FILTERING_PARAM | AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_VIDEO_PARAM
 static const AVOption options[] = {
-    { "bind_address", "set bind address", OFFSET(bind_address), AV_OPT_TYPE_STRING, {.str = "tcp://*:5555"}, 0, 0, FLAGS },
-    { "b",            "set bind address", OFFSET(bind_address), AV_OPT_TYPE_STRING, {.str = "tcp://*:5555"}, 0, 0, FLAGS },
+    { "bind_address", "set bind address", OFFSET(bind_address), AV_OPT_TYPE_STRING, {.str = "tcp://127.0.0.1:5555"}, 0, 0, FLAGS },
+    { "b",            "set bind address", OFFSET(bind_address), AV_OPT_TYPE_STRING, {.str = "tcp://127.0.0.1:5555"}, 0, 0, FLAGS },
     { NULL }
 };
 
@@ -115,7 +115,7 @@ static int parse_command(Command *cmd, const char *command_str, void *log_ctx)
     return 0;
 }
 
-static int recv_msg(AVFilterContext *ctx, char **buf, int *buf_size)
+static int recv_msg(AVFilterContext *ctx, char **buf)
 {
     ZMQContext *zmq = ctx->priv;
     zmq_msg_t msg;
@@ -135,14 +135,9 @@ static int recv_msg(AVFilterContext *ctx, char **buf, int *buf_size)
         goto end;
     }
 
-    *buf_size = zmq_msg_size(&msg) + 1;
-    *buf = av_malloc(*buf_size);
-    if (!*buf) {
+    *buf = av_strndup(zmq_msg_data(&msg), zmq_msg_size(&msg));
+    if (!*buf)
         ret = AVERROR(ENOMEM);
-        goto end;
-    }
-    memcpy(*buf, zmq_msg_data(&msg), *buf_size - 1);
-    (*buf)[*buf_size-1] = 0;
 
 end:
     zmq_msg_close(&msg);
@@ -157,29 +152,29 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *ref)
     while (1) {
         char cmd_buf[1024];
         char *recv_buf = NULL, *send_buf = NULL;
-        int recv_buf_size;
         Command cmd = {0};
         int ret;
 
         /* receive command */
-        if (recv_msg(ctx, &recv_buf, &recv_buf_size) < 0)
+        if (recv_msg(ctx, &recv_buf) < 0)
             break;
         zmq->command_count++;
 
         /* parse command */
-        if (parse_command(&cmd, recv_buf, ctx) < 0) {
+        ret = parse_command(&cmd, recv_buf, ctx);
+        if (ret < 0) {
             av_log(ctx, AV_LOG_ERROR, "Could not parse command #%d\n", zmq->command_count);
-            goto end;
+            cmd_buf[0] = 0;
+        } else {
+            /* process command */
+            av_log(ctx, AV_LOG_VERBOSE,
+                   "Processing command #%d target:%s command:%s arg:%s\n",
+                   zmq->command_count, cmd.target, cmd.command, cmd.arg);
+            ret = avfilter_graph_send_command(ff_filter_link(inlink)->graph,
+                                              cmd.target, cmd.command, cmd.arg,
+                                              cmd_buf, sizeof(cmd_buf),
+                                              AVFILTER_CMD_FLAG_ONE);
         }
-
-        /* process command */
-        av_log(ctx, AV_LOG_VERBOSE,
-               "Processing command #%d target:%s command:%s arg:%s\n",
-               zmq->command_count, cmd.target, cmd.command, cmd.arg);
-        ret = avfilter_graph_send_command(ff_filter_link(inlink)->graph,
-                                          cmd.target, cmd.command, cmd.arg,
-                                          cmd_buf, sizeof(cmd_buf),
-                                          AVFILTER_CMD_FLAG_ONE);
         send_buf = av_asprintf("%d %s%s%s",
                                -ret, av_err2str(ret), cmd_buf[0] ? "\n" : "", cmd_buf);
         if (!send_buf) {
@@ -196,7 +191,6 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *ref)
     end:
         av_freep(&send_buf);
         av_freep(&recv_buf);
-        recv_buf_size = 0;
         av_freep(&cmd.target);
         av_freep(&cmd.command);
         av_freep(&cmd.arg);

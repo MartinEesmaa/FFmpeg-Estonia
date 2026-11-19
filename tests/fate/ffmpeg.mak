@@ -125,6 +125,21 @@ fate-ffmpeg-shortest-small-audio-frames: CMD = ffmpeg -auto_conversion_filters \
     -f lavfi -i "color=s=16x16:r=1:d=2[out0];anullsrc=r=8000:cl=mono:n=1:d=45[out1]" \
     -map 0:v -map 0:a -c:v mpeg4 -c:a aac -shortest -shortest_buf_duration 0.1 -f null -
 
+# The audio frame extending past the end of a frame-limited video stream is
+# cut there, it used to be dropped, making the audio up to a frame too short.
+FATE_FFMPEG-$(call ALLYES, LAVFI_INDEV COLOR_FILTER SINE_FILTER \
+                           WRAPPED_AVFRAME_DECODER PCM_S16LE_DECODER \
+                           RAWVIDEO_ENCODER PCM_S16LE_ENCODER FRAMECRC_MUXER \
+                           PIPE_PROTOCOL) \
+                           += fate-ffmpeg-frames-cut-audio fate-ffmpeg-frames-cut-audio-round
+fate-ffmpeg-frames-cut-audio: CMD = framecrc \
+    -f lavfi -i "color=s=16x16:r=30000/1001:d=2[out0];sine=r=48000:samples_per_frame=4800:d=2[out1]" \
+    -map 0:v -map 0:a -frames:v 10
+# the end, 1601.6 samples, rounds to the whole frame
+fate-ffmpeg-frames-cut-audio-round: CMD = framecrc \
+    -f lavfi -i "color=s=16x16:r=30000/1001:d=2[out0];sine=r=48000:samples_per_frame=1602:d=2[out1]" \
+    -map 0:v -map 0:a -frames:v 1
+
 # test interleaving video with a sparse subtitle stream
 FATE_SAMPLES_FFMPEG-$(call FRAMECRC, MATROSKA,, COLOR_FILTER VOBSUB_DEMUXER \
                            RAWVIDEO_ENCODER MATROSKA_MUXER) += fate-shortest-sub
@@ -486,6 +501,23 @@ fate-ffmpeg-loopback-decoding: CMD = transcode \
     "rawvideo -s 352x288 -pix_fmt yuv420p" $(TARGET_PATH)/tests/data/vsynth1.yuv nut \
     "-map 0:v:0 -c:v mpeg2video -f null - -flags +bitexact -idct simple -threads $$threads -dec 0:0 -filter_complex '[0:v][dec:0]hstack[stack]' -map '[stack]' -c:v ffv1" ""
 FATE_FFMPEG-$(call ENCDEC2, MPEG2VIDEO, FFV1, NUT, HSTACK_FILTER PIPE_PROTOCOL FRAMECRC_MUXER) += fate-ffmpeg-loopback-decoding
+
+# Test sequence end with a partial B-frame chain and with queued B-frames.
+FATE_FFMPEG-$(call ENCMUX, MPEG2VIDEO, MPEG2VIDEO, TESTSRC2_FILTER FILE_PROTOCOL) += fate-mpeg2-seq-end-short fate-mpeg2-seq-end-bframes
+fate-mpeg2-seq-end-short: CMD = md5 -filter_complex testsrc2=s=64x64:r=25:d=0.08 -c:v mpeg2video -flags +bitexact -dct fastint -q:v 2 -bf 2 -seq_end 1 -f mpeg2video
+fate-mpeg2-seq-end-bframes: CMD = md5 -filter_complex testsrc2=s=64x64:r=25:d=0.12 -c:v mpeg2video -flags +bitexact -dct fastint -q:v 2 -bf 1 -seq_end 1 -f mpeg2video
+
+# Account for the end code before calculating CBR stuffing and vbv_delay.
+FATE_FFMPEG-$(call ENCMUX, MPEG2VIDEO, MPEG2VIDEO, COLOR_FILTER FILE_PROTOCOL) += fate-mpeg2-seq-end-cbr
+fate-mpeg2-seq-end-cbr: CMD = md5 -filter_complex color=s=64x64:r=25:d=0.08 -c:v mpeg2video -flags +bitexact -dct fastint -b:v 90000 -minrate 90000 -maxrate 90000 -bufsize 65536 -rc_init_occupancy 65536 -seq_end 1 -f mpeg2video
+
+# Skipping the last queued picture would leave no packet for the end code.
+FATE_FFMPEG-$(call ENCMUX, MPEG2VIDEO, MPEG2VIDEO, COLOR_FILTER PIPE_PROTOCOL) += fate-mpeg2-seq-end-skip-threshold fate-mpeg2-seq-end-skip-factor
+fate-mpeg2-seq-end-skip-threshold: SKIP_OPT = skip_threshold
+fate-mpeg2-seq-end-skip-factor: SKIP_OPT = skip_factor
+fate-mpeg2-seq-end-skip-threshold fate-mpeg2-seq-end-skip-factor: CMP = grep
+fate-mpeg2-seq-end-skip-threshold fate-mpeg2-seq-end-skip-factor: REF = Sequence end code is not supported with frame skipping
+fate-mpeg2-seq-end-skip-threshold fate-mpeg2-seq-end-skip-factor: CMD = ffmpeg -filter_complex color=s=64x64:r=25:d=0.08 -c:v mpeg2video -$(SKIP_OPT) 1 -seq_end 1 -f mpeg2video -; test $$? -ne 0
 
 # test matching by stream disposition
 fate-ffmpeg-spec-disposition: CMD = framecrc -i $(TARGET_SAMPLES)/mpegts/pmtchange.ts -map '0:disp:visual_impaired+descriptions:1' -c copy

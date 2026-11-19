@@ -46,10 +46,8 @@ typedef struct FeedbackContext {
 
 static void adjust_pos(AVFilterContext *ctx, FeedbackContext *s)
 {
-    if (s->x + s->w > ctx->inputs[0]->w)
-        s->x = ctx->inputs[0]->w - s->w;
-    if (s->y + s->h > ctx->inputs[0]->h)
-        s->y = ctx->inputs[0]->h - s->h;
+    s->x = FFMIN(s->x, ctx->inputs[0]->w - s->w);
+    s->y = FFMIN(s->y, ctx->inputs[0]->h - s->h);
 }
 
 static void adjust_parameters(AVFilterContext *ctx, FeedbackContext *s)
@@ -122,8 +120,6 @@ static int activate(AVFilterContext *ctx)
     int status, ret;
     int64_t pts;
 
-    adjust_pos(ctx, s);
-
     for (int i = 0; i < ctx->nb_outputs; i++)
         FF_FILTER_FORWARD_STATUS_BACK_ALL(ctx->outputs[i], ctx);
 
@@ -137,6 +133,7 @@ static int activate(AVFilterContext *ctx)
         AVFrame *src = s->feed;
         AVFrame *dst = NULL;
 
+        adjust_pos(ctx, s);
         av_fifo_read(s->fifo, &dst, 1);
         if (!dst)
             return AVERROR_BUG;
@@ -200,6 +197,7 @@ static int activate(AVFilterContext *ctx)
         if (ret > 0) {
             AVFrame *frame;
 
+            adjust_pos(ctx, s);
             ret = av_fifo_write(s->fifo, &in, 1);
             if (ret < 0) {
                 av_frame_free(&in);

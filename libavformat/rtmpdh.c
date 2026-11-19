@@ -66,10 +66,11 @@
         if (bn)                         \
             mpz_init2(bn, 1);           \
     } while (0)
-#define bn_free(bn)     \
-    do {                \
-        mpz_clear(bn);  \
-        av_free(bn);    \
+#define bn_free(bn)         \
+    do {                    \
+        if (bn)             \
+            mpz_clear(bn);  \
+        av_free(bn);        \
     } while (0)
 #define bn_set_word(bn, w)          mpz_set_ui(bn, w)
 #define bn_cmp(a, b)                mpz_cmp(a, b)
@@ -237,10 +238,8 @@ static FFBigNum dh_generate_key(FF_DH *dh)
     bn_random(dh->priv_key, 8 * num_bytes);
 
     bn_new(dh->pub_key);
-    if (!dh->pub_key) {
-        bn_free(dh->priv_key);
+    if (!dh->pub_key)
         return NULL;
-    }
 
     if (bn_modexp(dh->pub_key, dh->g, dh->priv_key, dh->p) < 0)
         return NULL;

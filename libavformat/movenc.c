@@ -795,11 +795,27 @@ static struct mpeg4_bit_rate_values calculate_mpeg4_bit_rates(MOVTrack *track)
     return bit_rates;
 }
 
+static int esds_has_decoder_specific_info(enum AVCodecID codec_id)
+{
+    switch (codec_id) {
+    case AV_CODEC_ID_AAC:
+    case AV_CODEC_ID_MP4ALS:
+    case AV_CODEC_ID_MPEG4:
+    case AV_CODEC_ID_VORBIS:
+    case AV_CODEC_ID_DVD_SUBTITLE:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
 static int mov_write_esds_tag(AVIOContext *pb, MOVTrack *track) // Basic
 {
     struct mpeg4_bit_rate_values bit_rates = calculate_mpeg4_bit_rates(track);
     int64_t pos = avio_tell(pb);
-    int decoder_specific_info_len = track->extradata_size[track->last_stsd_index] ?
+    int write_dsi = track->extradata_size[track->last_stsd_index] &&
+                    esds_has_decoder_specific_info(track->par->codec_id);
+    int decoder_specific_info_len = write_dsi ?
                                     5 + track->extradata_size[track->last_stsd_index] : 0;
 
     avio_wb32(pb, 0); // size
@@ -808,7 +824,7 @@ static int mov_write_esds_tag(AVIOContext *pb, MOVTrack *track) // Basic
 
     // ES descriptor
     put_descr(pb, 0x03, 3 + 5+13 + decoder_specific_info_len + 5+1);
-    avio_wb16(pb, track->track_id);
+    avio_wb16(pb, 0); // ES_ID as stored in the file
     avio_w8(pb, 0x00); // flags (= no flags)
 
     // DecoderConfig descriptor
@@ -835,7 +851,7 @@ static int mov_write_esds_tag(AVIOContext *pb, MOVTrack *track) // Basic
     avio_wb32(pb, bit_rates.max_bit_rate); // maxbitrate
     avio_wb32(pb, bit_rates.avg_bit_rate);
 
-    if (track->extradata_size[track->last_stsd_index]) {
+    if (write_dsi) {
         // DecoderSpecific info descriptor
         put_descr(pb, 0x05, track->extradata_size[track->last_stsd_index]);
         avio_write(pb, track->extradata[track->last_stsd_index],
@@ -4141,7 +4157,7 @@ static int mov_write_tkhd_tag(AVIOContext *pb, MOVMuxContext *mov,
         const AVPacketSideData *sd;
         if (mov->per_stream_grouping)
             group = st->index;
-        else
+        else if (mov->mode != MODE_MP4 || mov->nb_streams > 1)
             group = st->codecpar->codec_type;
 
         sd = av_packet_side_data_get(st->codecpar->coded_side_data,
@@ -4843,36 +4859,30 @@ static int mov_write_loci_tag(AVFormatContext *s, AVIOContext *pb)
 {
     int lang;
     int64_t pos = avio_tell(pb);
-    double latitude, longitude, altitude;
+    double latitude, longitude, altitude = 0;
     int32_t latitude_fix, longitude_fix, altitude_fix;
     AVDictionaryEntry *t = get_metadata_lang(s, "location", &lang);
     const char *ptr, *place = "";
-    char *end;
+    int n = 0;
     static const char *astronomical_body = "earth";
     if (!t)
         return 0;
 
     ptr = t->value;
-    latitude = strtod(ptr, &end);
-    if (end == ptr) {
+    if (av_sscanf(ptr, "%lf%lf%n", &latitude, &longitude, &n) < 2) {
         av_log(s, AV_LOG_WARNING, "malformed location metadata\n");
         return 0;
     }
-    ptr = end;
-    longitude = strtod(ptr, &end);
-    if (end == ptr) {
-        av_log(s, AV_LOG_WARNING, "malformed location metadata\n");
-        return 0;
-    }
-    ptr = end;
-    altitude = strtod(ptr, &end);
+    ptr += n;
     /* If no altitude was present, the default 0 should be fine */
-    if (*end == '/')
-        place = end + 1;
+    if (av_sscanf(ptr, "%lf%n", &altitude, &n) == 1)
+        ptr += n;
+    if (*ptr == '/')
+        place = ptr + 1;
 
-    latitude_fix  = (int32_t) ((1 << 16) * latitude);
-    longitude_fix = (int32_t) ((1 << 16) * longitude);
-    altitude_fix  = (int32_t) ((1 << 16) * altitude);
+    latitude_fix  = lrint(av_clipd((1 << 16) * latitude,  INT32_MIN, INT32_MAX));
+    longitude_fix = lrint(av_clipd((1 << 16) * longitude, INT32_MIN, INT32_MAX));
+    altitude_fix  = lrint(av_clipd((1 << 16) * altitude,  INT32_MIN, INT32_MAX));
 
     avio_wb32(pb, 0);         /* size */
     ffio_wfourcc(pb, "loci"); /* type */
@@ -6919,6 +6929,7 @@ static int mov_flush_fragment(AVFormatContext *s, int force)
             mov_write_identification(s->pb, s);
         if ((ret = mov_write_moov_tag(s->pb, mov, s)) < 0)
             return ret;
+        mov->moov_end = avio_tell(s->pb);
 
         if (mov->flags & FF_MOV_FLAG_DELAY_MOOV) {
             if (mov->flags & FF_MOV_FLAG_GLOBAL_SIDX)
@@ -8397,6 +8408,17 @@ static int mov_init(AVFormatContext *s)
         mov->flags |= FF_MOV_FLAG_FRAGMENT | FF_MOV_FLAG_EMPTY_MOOV |
                       FF_MOV_FLAG_DEFAULT_BASE_MOOF | FF_MOV_FLAG_NEGATIVE_CTS_OFFSETS;
 
+    /* global_sidx is inserted in a second pass, shifting all fragments. Use
+     * moof-relative addressing so that tfhd offsets remain valid after that
+     * shift, unless absolute offsets are already avoided (omit_tfhd_offset,
+     * ISMV) or no sidx is inserted (hybrid_fragmented). */
+    if (mov->flags & FF_MOV_FLAG_GLOBAL_SIDX &&
+        mov->flags & FF_MOV_FLAG_FRAGMENT &&
+        !(mov->flags & (FF_MOV_FLAG_OMIT_TFHD_OFFSET |
+                        FF_MOV_FLAG_HYBRID_FRAGMENTED)) &&
+        mov->mode != MODE_ISM)
+        mov->flags |= FF_MOV_FLAG_DEFAULT_BASE_MOOF;
+
     if (mov->flags & FF_MOV_FLAG_EMPTY_MOOV && s->flags & AVFMT_FLAG_AUTO_BSF) {
         av_log(s, AV_LOG_VERBOSE, "Empty MOOV enabled; disabling automatic bitstream filtering\n");
         s->flags &= ~AVFMT_FLAG_AUTO_BSF;
@@ -9143,6 +9165,7 @@ static int mov_write_header(AVFormatContext *s)
         if ((ret = mov_write_moov_tag(pb, mov, s)) < 0)
             return ret;
         mov->moov_written = 1;
+        mov->moov_end = avio_tell(pb);
         if (mov->flags & FF_MOV_FLAG_GLOBAL_SIDX)
             mov->reserved_header_pos = avio_tell(pb);
     }

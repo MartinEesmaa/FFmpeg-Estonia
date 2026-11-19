@@ -1038,7 +1038,7 @@ static av_cold int init(AVFilterContext *ctx)
     };
 
 #if CONFIG_LIBFRIBIDI
-    if (s->text_shaping)
+    if (s->text_shaping && s->text_source != AV_FRAME_DATA_DETECTION_BBOXES)
         if ((err = shape_text(ctx)) < 0)
             return err;
 #endif
@@ -1150,6 +1150,7 @@ static int config_input(AVFilterLink *inlink)
 {
     AVFilterContext *ctx = inlink->dst;
     DrawTextContext *s = ctx->priv;
+    AVExpr *x_pexpr = NULL, *y_pexpr = NULL, *a_pexpr = NULL;
     char *expr;
     int ret;
 
@@ -1175,20 +1176,24 @@ static int config_input(AVFilterLink *inlink)
 
     av_lfg_init(&s->prng, av_get_random_seed());
 
+    if ((ret = av_expr_parse(&x_pexpr, expr = s->x_expr, var_names,
+                             NULL, NULL, fun2_names, fun2, 0, ctx)) < 0 ||
+        (ret = av_expr_parse(&y_pexpr, expr = s->y_expr, var_names,
+                             NULL, NULL, fun2_names, fun2, 0, ctx)) < 0 ||
+        (ret = av_expr_parse(&a_pexpr, expr = s->a_expr, var_names,
+                             NULL, NULL, fun2_names, fun2, 0, ctx)) < 0) {
+        av_log(ctx, AV_LOG_ERROR, "Failed to parse expression: %s \n", expr);
+        av_expr_free(x_pexpr);
+        av_expr_free(y_pexpr);
+        return AVERROR(EINVAL);
+    }
+
     av_expr_free(s->x_pexpr);
     av_expr_free(s->y_pexpr);
     av_expr_free(s->a_pexpr);
-    s->x_pexpr = s->y_pexpr = s->a_pexpr = NULL;
-
-    if ((ret = av_expr_parse(&s->x_pexpr, expr = s->x_expr, var_names,
-                             NULL, NULL, fun2_names, fun2, 0, ctx)) < 0 ||
-        (ret = av_expr_parse(&s->y_pexpr, expr = s->y_expr, var_names,
-                             NULL, NULL, fun2_names, fun2, 0, ctx)) < 0 ||
-        (ret = av_expr_parse(&s->a_pexpr, expr = s->a_expr, var_names,
-                             NULL, NULL, fun2_names, fun2, 0, ctx)) < 0) {
-        av_log(ctx, AV_LOG_ERROR, "Failed to parse expression: %s \n", expr);
-        return AVERROR(EINVAL);
-    }
+    s->x_pexpr = x_pexpr;
+    s->y_pexpr = y_pexpr;
+    s->a_pexpr = a_pexpr;
 
     return 0;
 }
@@ -1217,6 +1222,8 @@ static int command(AVFilterContext *ctx, const char *cmd, const char *arg, char 
         }
 
         ret = init(ctx);
+        if (ret >= 0)
+            ret = config_input(ctx->inputs[0]);
         if (ret < 0) {
             uninit(ctx);
             ctx->priv = old;
@@ -1231,7 +1238,7 @@ static int command(AVFilterContext *ctx, const char *cmd, const char *arg, char 
         av_freep(&old);
 
         ctx->priv = new;
-        return config_input(ctx->inputs[0]);
+        return 0;
     } else {
         int old_borderw = old->borderw;
         if ((ret = ff_filter_process_command(ctx, cmd, arg, res, res_len, flags)) < 0) {
@@ -1252,6 +1259,7 @@ static int command(AVFilterContext *ctx, const char *cmd, const char *arg, char 
 
 fail:
     av_log(ctx, AV_LOG_ERROR, "Failed to process command. Continuing with existing parameters.\n");
+    av_opt_free(new);
     av_freep(&new);
     return ret;
 }
@@ -1899,7 +1907,8 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame)
         }
     }
 
-    if (s->reload && !(inl->frame_count_out % s->reload)) {
+    if (s->reload && s->text_source != AV_FRAME_DATA_DETECTION_BBOXES &&
+        !(inl->frame_count_out % s->reload)) {
         if ((ret = ff_load_textfile(ctx, (const char *)s->textfile, &s->text, NULL)) < 0) {
             av_frame_free(&frame);
             return ret;
@@ -1931,7 +1940,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame)
                 strcat(s->text, bbox->classify_labels[j]);
             }
             s->x = bbox->x;
-            s->y = bbox->y - s->fontsize;
+            s->y = (int64_t)bbox->y - s->fontsize;
         }
         ret = draw_text(ctx, frame);
         if (ret < 0) {

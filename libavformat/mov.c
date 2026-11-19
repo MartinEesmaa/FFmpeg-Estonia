@@ -286,7 +286,8 @@ static int mov_metadata_loci(MOVContext *c, AVIOContext *pb, unsigned len)
     char language[4] = { 0 };
     char buf[200], place[100];
     uint16_t langcode = 0;
-    double longitude, latitude, altitude;
+    int32_t longitude, latitude, altitude;
+    int64_t lat, lon, alt;
     const char *key = "location";
 
     if (len < 4 + 2 + 1 + 1 + 4 + 4 + 4) {
@@ -312,15 +313,19 @@ static int mov_metadata_loci(MOVContext *c, AVIOContext *pb, unsigned len)
                "loci too short (%u bytes left, need at least %d)\n", len, 12);
         return AVERROR_INVALIDDATA;
     }
-    longitude = ((int32_t) avio_rb32(pb)) / (float) (1 << 16);
-    latitude  = ((int32_t) avio_rb32(pb)) / (float) (1 << 16);
-    altitude  = ((int32_t) avio_rb32(pb)) / (float) (1 << 16);
+    longitude = avio_rb32(pb);
+    latitude  = avio_rb32(pb);
+    altitude  = avio_rb32(pb);
 
-    // Try to output in the same format as the ?xyz field
-    snprintf(buf, sizeof(buf), "%+08.4f%+09.4f",  latitude, longitude);
-    if (altitude)
-        av_strlcatf(buf, sizeof(buf), "%+f", altitude);
-    av_strlcatf(buf, sizeof(buf), "/%s", place);
+    // ISO 6709 string as written by QuickTime, independently of the locale
+    lat = llrint(fabs(latitude  * (10000.0 / (1 << 16))));
+    lon = llrint(fabs(longitude * (10000.0 / (1 << 16))));
+    alt = llrint(fabs(altitude  * (1000.0  / (1 << 16))));
+    snprintf(buf, sizeof(buf), "%c%02"PRId64".%04"PRId64"%c%03"PRId64".%04"PRId64
+             "%c%03"PRId64".%03"PRId64"/%s",
+             latitude  < 0 ? '-' : '+', lat / 10000, lat % 10000,
+             longitude < 0 ? '-' : '+', lon / 10000, lon % 10000,
+             altitude  < 0 ? '-' : '+', alt / 1000,  alt % 1000, place);
 
     if (*language && strcmp(language, "und")) {
         char key2[16];
@@ -329,6 +334,56 @@ static int mov_metadata_loci(MOVContext *c, AVIOContext *pb, unsigned len)
     }
     c->fc->event_flags |= AVFMT_EVENT_FLAG_METADATA_UPDATED;
     return av_dict_set(&c->fc->metadata, key, buf, 0);
+}
+
+// 3GPP TS 26.244 user data box or tnam, after its version and flags
+static int mov_metadata_3gp(MOVContext *c, AVIOContext *pb, int64_t len,
+                            const char *key, AVDictionary **metadata)
+{
+    char language[4], *str;
+    int size, ch, ret;
+
+    c->fc->event_flags |= AVFMT_EVENT_FLAG_METADATA_UPDATED;
+    if (!strcmp(key, "date"))
+        return len < 2 ? 0 : av_dict_set_int(metadata, key, avio_rb16(pb), 0);
+
+    if (len < 3 || len >= INT_MAX / 2)
+        return 0;
+    ff_mov_lang_to_iso639(avio_rb16(pb), language);
+    len -= 2;
+
+    size = 2 * len + 1;
+    str = av_malloc(size);
+    if (!str)
+        return AVERROR(ENOMEM);
+    ch = avio_r8(pb);
+    if (ch == 0xFE || ch == 0xFF) { // UTF-16 byte order mark, never in UTF-8
+        if (len < 2) {
+            av_free(str);
+            return 0;
+        }
+        avio_skip(pb, 1);
+        len -= 2 + (ch == 0xFE ? avio_get_str16be(pb, len - 2, str, size)
+                               : avio_get_str16le(pb, len - 2, str, size));
+    } else {
+        str[0] = ch;
+        len -= 1 + (ch ? avio_get_str(pb, len - 1, str + 1, size - 1) : 0);
+    }
+
+    ret = av_dict_set(metadata, key, str, 0);
+    if (ret >= 0 && *language && strcmp(language, "und")) {
+        char key2[32];
+        snprintf(key2, sizeof(key2), "%s-%s", key, language);
+        ret = av_dict_set(metadata, key2, str, 0);
+    }
+    av_free(str);
+
+    if (ret >= 0 && len > 0 && !strcmp(key, "album")) {
+        int track = avio_r8(pb);
+        if (track)
+            ret = av_dict_set_int(metadata, "track", track, 0);
+    }
+    return ret;
 }
 
 static int mov_metadata_hmmt(MOVContext *c, AVIOContext *pb, unsigned len)
@@ -364,6 +419,7 @@ static int mov_read_udta_string(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     int (*parse)(MOVContext*, AVIOContext*, unsigned, const char*) = NULL;
     int raw = 0;
     int num = 0;
+    int tgp = 0;
     AVDictionary **metadata;
 
     if (c->trak_index >= 0 && c->trak_index < c->fc->nb_streams)
@@ -379,18 +435,21 @@ static int mov_read_udta_string(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     case MKTAG( 'a','A','R','T'): key = "album_artist";    break;
     case MKTAG( 'a','k','I','D'): key = "account_type";
         parse = mov_metadata_int8_no_padding; break;
+    case MKTAG( 'a','l','b','m'): key = "album"; tgp = 1; break;
     case MKTAG( 'a','p','I','D'): key = "account_id"; break;
+    case MKTAG( 'a','u','t','h'): key = "author"; tgp = 1; break;
     case MKTAG( 'c','a','t','g'): key = "category"; break;
     case MKTAG( 'c','p','i','l'): key = "compilation";
         parse = mov_metadata_int8_no_padding; break;
-    case MKTAG( 'c','p','r','t'): key = "copyright"; break;
+    case MKTAG( 'c','p','r','t'): key = "copyright"; tgp = 1; break;
     case MKTAG( 'd','e','s','c'): key = "description"; break;
     case MKTAG( 'd','i','s','k'): key = "disc";
         parse = mov_metadata_track_or_disc_number; break;
+    case MKTAG( 'd','s','c','p'): key = "comment"; tgp = 1; break;
     case MKTAG( 'e','g','i','d'): key = "episode_uid";
         parse = mov_metadata_int8_no_padding; break;
     case MKTAG( 'F','I','R','M'): key = "firmware"; raw = 1; break;
-    case MKTAG( 'g','n','r','e'): key = "genre";
+    case MKTAG( 'g','n','r','e'): key = "genre"; tgp = 1;
         parse = mov_metadata_gnre; break;
     case MKTAG( 'h','d','v','d'): key = "hd_video";
         parse = mov_metadata_int8_no_padding; break;
@@ -405,6 +464,7 @@ static int mov_read_udta_string(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     case MKTAG( 'n','a','m','e'): key = "name"; break;
     case MKTAG( 'p','c','s','t'): key = "podcast";
         parse = mov_metadata_int8_no_padding; break;
+    case MKTAG( 'p','e','r','f'): key = "artist"; tgp = 1; break;
     case MKTAG( 'p','g','a','p'): key = "gapless_playback";
         parse = mov_metadata_int8_no_padding; break;
     case MKTAG( 'p','u','r','d'): key = "purchase_date"; break;
@@ -418,6 +478,8 @@ static int mov_read_udta_string(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     case MKTAG( 's','o','s','n'): key = "sort_show";    break;
     case MKTAG( 's','t','i','k'): key = "media_type";
         parse = mov_metadata_int8_no_padding; break;
+    case MKTAG( 't','i','t','l'): key = "title"; tgp = 1; break;
+    case MKTAG( 't','n','a','m'): key = "title"; tgp = 1; break;
     case MKTAG( 't','r','k','n'): key = "track";
         parse = mov_metadata_track_or_disc_number; break;
     case MKTAG( 't','v','e','n'): key = "episode_id"; break;
@@ -427,6 +489,7 @@ static int mov_read_udta_string(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     case MKTAG( 't','v','s','h'): key = "show";      break;
     case MKTAG( 't','v','s','n'): key = "season_number";
         parse = mov_metadata_int8_bypass_padding; break;
+    case MKTAG( 'y','r','r','c'): key = "date"; tgp = 1; break;
     case MKTAG(0xa9,'A','R','T'): key = "artist";    break;
     case MKTAG(0xa9,'P','R','D'): key = "producer";  break;
     case MKTAG(0xa9,'a','l','b'): key = "album";     break;
@@ -507,6 +570,8 @@ retry:
         langcode = avio_rb16(pb);
         ff_mov_lang_to_iso639(langcode, language);
         atom.size -= 4;
+        if (tgp && !str_size && !langcode) // full box version and flags
+            return mov_metadata_3gp(c, pb, atom.size, key, metadata);
     } else
         str_size = atom.size;
 
@@ -928,11 +993,12 @@ static int mov_read_iacb(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     int nb_frames, disposition;
     int version, ret;
 
+    st = get_curr_st(c);
+    if (!st)
+        return 0;
+
     if (atom.size < 5)
         return AVERROR_INVALIDDATA;
-
-    if (c->fc->nb_streams < 1)
-        return 0;
 
     version = avio_r8(pb);
     if (version != 1) {
@@ -945,7 +1011,6 @@ static int mov_read_iacb(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     if (!descriptors_size || descriptors_size > INT_MAX)
         return AVERROR_INVALIDDATA;
 
-    st = c->fc->streams[c->fc->nb_streams - 1];
     sc = st->priv_data;
 
     if (st->codecpar->extradata) {
@@ -4738,13 +4803,12 @@ static void mov_fix_index(MOVContext *mov, AVStream *st)
                     av_log(mov->fc, AV_LOG_DEBUG, "drop a frame at curr_cts: %"PRId64" @ %"PRId64"\n", curr_cts, index);
 
                     if (edit_list_start_encountered == 0) {
-                        num_discarded_begin++;
-                        if (av_reallocp_array(&frame_duration_buffer, num_discarded_begin,
-                                              sizeof(*frame_duration_buffer)) < 0) {
+                        if (!av_dynarray2_add((void **)&frame_duration_buffer, &num_discarded_begin,
+                                              sizeof(*frame_duration_buffer),
+                                              (const uint8_t *)&frame_duration)) {
                             av_log(mov->fc, AV_LOG_ERROR, "Cannot reallocate frame duration buffer\n");
                             break;
                         }
-                        frame_duration_buffer[num_discarded_begin - 1] = frame_duration;
 
                         // Increment skip_samples for the first non-zero audio edit list
                         if (st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO &&
@@ -5561,7 +5625,8 @@ static int mov_update_iamf_streams(MOVContext *c, const AVStream *st)
             out_sti->index_entries_allocated_size = sti->index_entries_allocated_size;
             out_sti->nb_index_entries = sti->nb_index_entries;
             out_sti->skip_samples = sti->skip_samples;
-            memcpy(out_sti->index_entries, sti->index_entries, sti->index_entries_allocated_size);
+            if (sti->index_entries_allocated_size)
+                memcpy(out_sti->index_entries, sti->index_entries, sti->index_entries_allocated_size);
         }
     }
 
@@ -7366,6 +7431,7 @@ static int mov_read_sv3d(MOVContext *c, AVIOContext *pb, MOVAtom atom)
         return 0;
     }
 
+    av_freep(&sc->spherical);
     sc->spherical = av_spherical_alloc(&sc->spherical_size);
     if (!sc->spherical)
         return AVERROR(ENOMEM);
@@ -7450,6 +7516,7 @@ static int mov_read_vexu_proj(MOVContext *c, AVIOContext *pb, MOVAtom atom)
         return AVERROR_INVALIDDATA;
     }
 
+    av_freep(&sc->spherical);
     sc->spherical = av_spherical_alloc(&sc->spherical_size);
     if (!sc->spherical)
         return AVERROR(ENOMEM);
@@ -9834,10 +9901,12 @@ fail:
     return ret;
 }
 
-static int mov_read_iref_dimg(MOVContext *c, AVIOContext *pb, int version)
+static int mov_read_iref_dimg(MOVContext *c, AVIOContext *pb, int version,
+                              uint32_t size)
 {
     HEIFItem *item = NULL;
     int entries;
+    int item_id_size = version ? 4 : 2;
     int from_item_id = version ? avio_rb32(pb) : avio_rb16(pb);
     int ret;
 
@@ -9874,6 +9943,11 @@ static int mov_read_iref_dimg(MOVContext *c, AVIOContext *pb, int version)
     if (!entries) {
         av_log(c->fc, AV_LOG_ERROR,
                "Derived image item references no input images\n");
+        return AVERROR_INVALIDDATA;
+    }
+    if ((int64_t)entries * item_id_size > (int64_t)size - item_id_size - 2) {
+        av_log(c->fc, AV_LOG_ERROR, "iref dimg entry count %d exceeds the sub-box size\n",
+               entries);
         return AVERROR_INVALIDDATA;
     }
 
@@ -10013,7 +10087,7 @@ static int mov_read_iref(MOVContext *c, AVIOContext *pb, MOVAtom atom)
         type = avio_rl32(pb);
         switch (type) {
         case MKTAG('d','i','m','g'):
-            ret = mov_read_iref_dimg(c, pb, version);
+            ret = mov_read_iref_dimg(c, pb, version, size - 8);
             if (ret < 0)
                 return ret;
             break;
@@ -10315,6 +10389,46 @@ static int mov_read_mhac(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     return ret;
 }
 
+static int mov_read_uncc(MOVContext *c, AVIOContext *pb, MOVAtom atom)
+{
+    AVStream *st;
+    int version;
+    uint32_t profile;
+
+    if (c->fc->nb_streams < 1)
+        return 0;
+    st = c->fc->streams[c->fc->nb_streams - 1];
+
+    if (atom.size < 8)
+        return AVERROR_INVALIDDATA;
+
+    version = avio_r8(pb);
+    avio_rb24(pb); /* flags */
+    profile = avio_rl32(pb);
+
+    if (version == 1) {
+        switch (profile) {
+            case MKTAG('r','g','b','3'):
+                st->codecpar->format = AV_PIX_FMT_RGB24;
+                break;
+            case MKTAG('r','g','b','a'):
+                st->codecpar->format = AV_PIX_FMT_RGBA;
+                break;
+            default:
+                avpriv_request_sample(c->fc, "Unknown uncC profile %s", av_fourcc2str(profile));
+                return AVERROR_INVALIDDATA;
+        }
+    } else if (version == 0) {
+        avpriv_request_sample(c->fc, "uncC version 0 not yet implemented");
+        return AVERROR_PATCHWELCOME;
+    } else {
+        av_log(c->fc, AV_LOG_WARNING, "Unknown uncC version %d\n", version);
+        return AVERROR_INVALIDDATA;
+    }
+
+    return 0;
+}
+
 static const MOVParseTableEntry mov_default_parse_table[] = {
 { MKTAG('A','C','L','R'), mov_read_aclr },
 { MKTAG('A','P','R','G'), mov_read_avid },
@@ -10351,6 +10465,7 @@ static const MOVParseTableEntry mov_default_parse_table[] = {
 { MKTAG('S','M','I',' '), mov_read_svq3 },
 { MKTAG('a','l','a','c'), mov_read_alac }, /* alac specific atom */
 { MKTAG('a','v','c','C'), mov_read_glbl },
+{ MKTAG('u','n','c','C'), mov_read_uncc },
 { MKTAG('p','a','s','p'), mov_read_pasp },
 { MKTAG('c','l','a','p'), mov_read_clap },
 { MKTAG('c','d','s','c'), mov_read_cdsc_rndr },
@@ -10918,6 +11033,7 @@ static void mov_free_stream_context(AVFormatContext *s, AVStream *st)
     mov_free_encryption_index(&sc->cenc.encryption_index);
     av_encryption_info_free(sc->cenc.default_encrypted_sample);
     av_aes_ctr_free(sc->cenc.aes_ctr);
+    av_freep(&sc->cenc.aes_ctx);
 
     av_freep(&sc->stereo3d);
     av_freep(&sc->spherical);

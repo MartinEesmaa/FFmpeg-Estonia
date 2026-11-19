@@ -479,6 +479,7 @@ Optimization options (experts only):
   --disable-avx2           disable AVX2 optimizations
   --disable-avx512         disable AVX-512 optimizations
   --disable-avx512icl      disable AVX-512ICL optimizations
+  --disable-avxvnni        disable AVX-VNNI optimizations
   --disable-aesni          disable AESNI optimizations
   --disable-clmul          disable CLMUL optimizations
   --disable-armv5te        disable armv5te optimizations
@@ -978,6 +979,16 @@ resolve(){
         eval 'resolve_out="$resolve_out$'$v' "'
     done
     eval $1=\$resolve_out
+}
+
+# removes the names of empty variables from the list
+drop_empty(){
+    drop_empty_out=
+    eval drop_empty_in=\$$1
+    for v in $drop_empty_in; do
+        eval test -n \"\$$v\" && drop_empty_out="$drop_empty_out$v "
+    done
+    eval $1=\$drop_empty_out
 }
 
 add_cppflags(){
@@ -2375,6 +2386,7 @@ ARCH_EXT_LIST_X86_SIMD="
     avx2
     avx512
     avx512icl
+    avxvnni
     fma3
     fma4
     mmx
@@ -2495,6 +2507,7 @@ INTRINSICS_LIST="
 SYSTEM_FEATURES="
     dos_paths
     libc_msvcrt
+    loopback
     MMAL_PARAMETER_VIDEO_MAX_NUM_CALLBACKS
     section_data_rel_ro
     threads
@@ -2618,6 +2631,7 @@ TYPES_LIST="
     IDXGIOutput5
     __x_ABI_CWindows_CGraphics_CCapture_CIGraphicsCaptureSession5
     IDirect3DDxgiInterfaceAccess
+    ID3D12VideoEncodeCommandList
     kCMVideoCodecType_HEVC
     kCMVideoCodecType_HEVCWithAlpha
     kCMVideoCodecType_VP9
@@ -3001,6 +3015,7 @@ fma4_deps="avx"
 avx2_deps="avx"
 avx512_deps="avx2"
 avx512icl_deps="avx512"
+avxvnni_deps="avx2"
 
 mmx_external_deps="x86asm"
 mmx_inline_deps="inline_asm x86"
@@ -6788,6 +6803,7 @@ elif enabled x86; then
         enabled avx512    && check_x86asm avx512_external    "vmovdqa32 [eax]{k1}{z}, zmm0"
         enabled avx512icl && check_x86asm avx512icl_external "vpdpwssds zmm31{k1}{z}, zmm29, zmm28"
         enabled avx2      && check_x86asm avx2_external      "vextracti128 xmm0, ymm0, 0"
+        enabled avxvnni   && check_x86asm avxvnni_external   "{vex} vpdpwssd ymm0, ymm1, ymm2"
         enabled xop       && check_x86asm xop_external       "vpmacsdd xmm0, xmm1, xmm2, xmm3"
         enabled fma4      && check_x86asm fma4_external      "vfmaddps ymm0, ymm1, ymm2, ymm3"
         enabled avx       && check_x86asm avx_external       "vpermilpd ymm0, ymm1, 0x72"
@@ -6835,6 +6851,25 @@ if ! disabled network; then
     # Prefer arpa/inet.h over winsock2
     if check_headers arpa/inet.h ; then
         check_func closesocket
+        test_exec $network_extralibs <<EOF && enable loopback
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <unistd.h>
+int main(void) {
+    struct sockaddr_in a = { 0 };
+    int s = socket(AF_INET, SOCK_STREAM, 0);
+    if (s < 0)
+        return 1;
+    a.sin_family = AF_INET;
+    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (bind(s, (const struct sockaddr *)&a, sizeof(a)) < 0 ||
+        listen(s, 1) < 0)
+        return 1;
+    close(s);
+    return 0;
+}
+EOF
     elif check_headers winsock2.h ; then
         check_func_headers winsock2.h closesocket -lws2 &&
             network_extralibs="-lws2" ||
@@ -6851,6 +6886,27 @@ if ! disabled network; then
         check_struct winsock2.h "struct sockaddr" sa_len
         check_type ws2tcpip.h "struct sockaddr_in6"
         check_type ws2tcpip.h "struct sockaddr_storage"
+        enabled winsock2_h && test_exec $network_extralibs <<EOF && enable loopback
+#include <winsock2.h>
+int main(void) {
+    WSADATA wsa;
+    SOCKET s;
+    struct sockaddr_in a = { 0 };
+    if (WSAStartup(MAKEWORD(1, 1), &wsa))
+        return 1;
+    s = socket(AF_INET, SOCK_STREAM, 0);
+    if (s == INVALID_SOCKET)
+        return 1;
+    a.sin_family = AF_INET;
+    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (bind(s, (const struct sockaddr *)&a, sizeof(a)) < 0 ||
+        listen(s, 1) < 0)
+        return 1;
+    closesocket(s);
+    WSACleanup();
+    return 0;
+}
+EOF
     else
         disable network
     fi
@@ -7105,6 +7161,7 @@ check_type "windows.h d3d11.h" "ID3D11VideoContext"
 check_type "windows.h d3d12.h" "ID3D12Device"
 check_type "windows.h d3d12video.h" "ID3D12VideoDecoder"
 check_type "windows.h d3d12video.h" "ID3D12VideoEncoder"
+check_type "windows.h d3d12video.h" "ID3D12VideoEncodeCommandList"
 check_type "windows.h d3d12video.h" "ID3D12VideoProcessor"
 check_type "windows.h d3d12video.h" "ID3D12VideoMotionEstimator"
 test_code cc "windows.h d3d12video.h" "D3D12_FEATURE_VIDEO feature = D3D12_FEATURE_VIDEO_ENCODER_CODEC" && \
@@ -7877,8 +7934,8 @@ enabled debug && add_allcflags -g"$debuglevel" && add_asflags -g"$debuglevel"
 check_warning(){
     warning_flag=$1
     flag_to_add=${2:-$1}
-    test_cflags -Werror $warning_flag && add_cflags $flag_to_add
     test_cxxflags -Werror $warning_flag && add_cxxflags $flag_to_add
+    test_cflags -Werror $warning_flag && add_cflags $flag_to_add
 }
 
 check_disable_warning(){
@@ -7903,7 +7960,9 @@ check_warning -Wempty-body
 # Warn about excessive stack usage, using a 120 KiB per-function threshold.
 # This roughly matches the default thread stack size on Musl, which is 128 KiB,
 # leaving some headroom for caller frames.
-check_warning -Wstack-usage=122880
+if ! check_warning -Wstack-usage=122880; then
+    check_warning -Wframe-larger-than=122880
+fi
 
 # GCC accepts warning option level 5 here to warn about all fallthroughs
 # that are not explicitly marked with the appropriate attribute
@@ -8207,32 +8266,34 @@ if ! enabled_any memalign posix_memalign aligned_malloc; then
 fi
 
 flatten_extralibs(){
-    nested_entries=
     list_name=$1
     eval list=\$${1}
-    for entry in $list; do
-        entry_copy=$entry
-        resolve entry_copy
-        flat_entries=
-        for e in $entry_copy; do
-            case $e in
-                *_extralibs) nested_entries="$nested_entries$e ";;
-                          *) flat_entries="$flat_entries$e ";;
-            esac
+    flatten_all=
+    while test -n "$list"; do
+        flatten_all="$flatten_all$list "
+        nested_entries=
+        for entry in $list; do
+            eval test -n \"\$${entry}_flattened\" && continue
+            eval ${entry}_flattened=1
+            eval entry_value=\$$entry
+            flat_entries=
+            for e in $entry_value; do
+                case $e in
+                    *_extralibs) nested_entries="$nested_entries$e ";;
+                              *) flat_entries="$flat_entries$e ";;
+                esac
+            done
+            eval $entry="\$flat_entries"
         done
-        eval $entry="\$flat_entries"
+        list=$nested_entries
     done
-    append $list_name "$nested_entries"
-
-    resolve nested_entries
-    if test -n "$(filter '*_extralibs' $nested_entries)"; then
-        flatten_extralibs $list_name
-    fi
+    eval $list_name=\$flatten_all
 }
 
 flatten_extralibs_wrapper(){
     list_name=$1
     flatten_extralibs $list_name
+    drop_empty $list_name
     unique $list_name
     resolve $list_name
     eval $list_name=\$\(\$ldflags_filter \$$list_name\)
@@ -8390,6 +8451,7 @@ if enabled x86; then
     echo "AVX2 enabled              ${avx2-no}"
     echo "AVX-512 enabled           ${avx512-no}"
     echo "AVX-512ICL enabled        ${avx512icl-no}"
+    echo "AVX-VNNI enabled          ${avxvnni-no}"
     echo "XOP enabled               ${xop-no}"
     echo "FMA3 enabled              ${fma3-no}"
     echo "FMA4 enabled              ${fma4-no}"
