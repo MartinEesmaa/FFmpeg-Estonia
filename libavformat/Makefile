@@ -18,6 +18,7 @@ OBJS = allformats.o         \
        dump.o               \
        dv.o                 \
        format.o             \
+       hevc.o               \
        id3v1.o              \
        id3v2/reader.o       \
        isom_tags.o          \
@@ -48,7 +49,7 @@ include $(SRC_PATH)/libavformat/vorbis/comment/Makefile
 OBJS-$(CONFIG_CBS_APV_LAVF)              += cbs_apv.o cbs.o
 OBJS-$(CONFIG_CBS_AV1_LAVF)              += cbs_av1.o cbs.o
 OBJS-$(CONFIG_ISO_MEDIA)                 += isom.o
-OBJS-$(CONFIG_ISO_WRITER)                += avc.o hevc.o vvc.o
+OBJS-$(CONFIG_ISO_WRITER)                += avc.o vvc.o
 OBJS-$(CONFIG_IAMFDEC)                   += iamf_reader.o iamf_parse.o iamf.o
 OBJS-$(CONFIG_IAMFENC)                   += iamf_writer.o iamf.o
 OBJS-$(CONFIG_NETWORK)                   += network.o
@@ -408,7 +409,7 @@ OBJS-$(CONFIG_MOV_MUXER)                 += movenc.o \
                                             movenccenc.o movenc_ttml.o rawutils.o \
                                             apv.o dovi_isom.o evc.o
 OBJS-$(CONFIG_MP2_MUXER)                 += rawenc.o
-OBJS-$(CONFIG_MP3_DEMUXER)               += mp3dec.o replaygain.o
+OBJS-$(CONFIG_MP3_DEMUXER)               += mp3dec.o apetag.o img2.o replaygain.o
 OBJS-$(CONFIG_MP3_MUXER)                 += mp3enc.o rawenc.o id3v2/writer.o
 OBJS-$(CONFIG_MPC_DEMUXER)               += mpc.o apetag.o img2.o
 OBJS-$(CONFIG_MPC8_DEMUXER)              += mpc8.o apetag.o img2.o
@@ -655,7 +656,7 @@ OBJS-$(CONFIG_WEBVTT_DEMUXER)            += webvttdec.o subtitles.o
 OBJS-$(CONFIG_WEBVTT_MUXER)              += webvttenc.o
 OBJS-$(CONFIG_EWHIP_MUXER)               += whip_external.o whip_whep.o
 OBJS-$(CONFIG_EWHEP_DEMUXER)             += whep.o whip_whep.o
-OBJS-$(CONFIG_WHIP_MUXER)                += whip.o avc.o http.o httpcookie.o srtp.o
+OBJS-$(CONFIG_WHIP_MUXER)                += whip.o rtc.o avc.o http.o httpcookie.o srtp.o
 OBJS-$(CONFIG_WSAUD_DEMUXER)             += westwood_aud.o
 OBJS-$(CONFIG_WSAUD_MUXER)               += westwood_audenc.o
 OBJS-$(CONFIG_WSD_DEMUXER)               += wsddec.o rawdec.o
@@ -754,24 +755,24 @@ OBJS-$(CONFIG_LIBZMQ_PROTOCOL)           += libzmq.o
 
 # Objects duplicated from other libraries for shared builds
 SHLIBOBJS                                += log2_tab.o to_upper4.o \
-                                            h2645_parse.o lcevctab.o
+                                            golomb_tab.o h2645_parse.o \
+                                            lcevctab.o
 SHLIBOBJS-$(CONFIG_ISO_MEDIA)            += mpegaudiotabs.o
-SHLIBOBJS-$(CONFIG_ISO_WRITER)           += golomb_tab.o
 SHLIBOBJS-$(CONFIG_FLV_MUXER)            += mpeg4audio_sample_rates.o
 SHLIBOBJS-$(CONFIG_HLS_DEMUXER)          += ac3_channel_layout_tab.o
 SHLIBOBJS-$(CONFIG_IMAGE_JPEGXL_PIPE_DEMUXER)    += jpegxl_parse.o
 SHLIBOBJS-$(CONFIG_JNI)                  += ffjni.o
 SHLIBOBJS-$(CONFIG_JPEGXL_ANIM_DEMUXER)  += jpegxl_parse.o
-SHLIBOBJS-$(CONFIG_MATROSKA_DEMUXER)     += mpeg4audio_sample_rates.o
+SHLIBOBJS-$(CONFIG_MATROSKA_DEMUXER)     += mpeg4audio_sample_rates.o \
+                                            opus_frame_duration_tab.o
 SHLIBOBJS-$(CONFIG_MATROSKA_MUXER)       += opus_frame_duration_tab.o
 SHLIBOBJS-$(CONFIG_MOV_DEMUXER)          += ac3_channel_layout_tab.o
 SHLIBOBJS-$(CONFIG_MOV_MUXER)            += mpegaudiotabs.o
 SHLIBOBJS-$(CONFIG_MP3_MUXER)            += mpegaudiotabs.o
-SHLIBOBJS-$(CONFIG_MXF_MUXER)            += golomb_tab.o \
-                                            rangecoder_dec.o
+SHLIBOBJS-$(CONFIG_MXF_MUXER)            += rangecoder_dec.o
 SHLIBOBJS-$(CONFIG_NUT_MUXER)            += mpegaudiotabs.o
 SHLIBOBJS-$(CONFIG_RTPDEC)               += jpegtables.o
-SHLIBOBJS-$(CONFIG_RTP_MUXER)            += golomb_tab.o jpegtables.o \
+SHLIBOBJS-$(CONFIG_RTP_MUXER)            += jpegtables.o \
                                             mpeg4audio_sample_rates.o
 SHLIBOBJS-$(CONFIG_SPDIF_MUXER)          += dca_sample_rate_tab.o
 SHLIBOBJS-$(CONFIG_WEBM_MUXER)           += opus_frame_duration_tab.o
@@ -785,7 +786,8 @@ SKIPHEADERS-$(CONFIG_IMF_DEMUXER)        += imf.h
 SKIPHEADERS-$(CONFIG_FFRTMPCRYPT_PROTOCOL) += rtmpdh.h
 SKIPHEADERS-$(CONFIG_NETWORK)            += ip.h network.h rtsp.h
 
-TESTPROGS = demux_probe                                                 \
+TESTPROGS = codecstring                                                 \
+            demux_probe                                                 \
             id3v2                                                       \
             mkdir                                                       \
             rename                                                      \
@@ -793,15 +795,18 @@ TESTPROGS = demux_probe                                                 \
             url                                                         \
             seek_utils
 TESTPROGS-$(CONFIG_RTPDEC)               += rtpdec
+TESTPROGS-$(and $(CONFIG_AC3_PARSER),$(CONFIG_AC3_DECODER)) += parse_skip_samples
 #           async                                                       \
 
 FIFO-MUXER-TESTPROGS-$(CONFIG_NETWORK)   += fifo_muxer
 TESTPROGS-$(CONFIG_FIFO_MUXER)           += $(FIFO-MUXER-TESTPROGS-yes)
 TESTPROGS-$(CONFIG_FFRTMPCRYPT_PROTOCOL) += rtmpdh
+TESTPROGS-$(CONFIG_HLS_MUXER)            += hlsenc
 TESTPROGS-$(CONFIG_HTTP_PROTOCOL)        += http httpcookie
-# http_nobody covers both the http and httpproxy read paths.
+# http_nobody covers the http, httpproxy and libcurl read paths.
 HTTP_NOBODY_TESTPROG-$(CONFIG_HTTP_PROTOCOL)      = http_nobody
 HTTP_NOBODY_TESTPROG-$(CONFIG_HTTPPROXY_PROTOCOL) = http_nobody
+HTTP_NOBODY_TESTPROG-$(CONFIG_LIBCURL_PROTOCOL)   = http_nobody
 TESTPROGS                                       += $(HTTP_NOBODY_TESTPROG-yes)
 TESTPROGS-$(CONFIG_NETWORK)              += noproxy
 TESTPROGS-$(CONFIG_SRTP)                 += srtp

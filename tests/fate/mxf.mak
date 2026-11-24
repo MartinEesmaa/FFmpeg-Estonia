@@ -80,8 +80,19 @@ fate-mxf-eia608-open-gop: CMD = transcode mxf $(TARGET_PATH)/tests/data/fate/mxf
 FATE_MXF-$(call DEMMUX, MXF, MXF_OPATOM, MPEGVIDEO_PARSER MPEG2VIDEO_DECODER) += fate-mxf-opatom-user-comments
 fate-mxf-opatom-user-comments: CMD = md5 -y -i $(TARGET_SAMPLES)/mxf/Sony-00001.mxf -an -vcodec copy -metadata "comment_test=value" -fflags +bitexact -f mxf_opatom
 
+# Tests remuxing DV into clip wrapped OPAtom.
+FATE_MXF-$(call REMUX, MXF_OPATOM MXF, DVVIDEO_DECODER) += fate-mxf-remux-opatom-dv25
+fate-mxf-remux-opatom-dv25: CMD = transcode mxf $(TARGET_SAMPLES)/mxf/Avid-00005.mxf mxf_opatom "-map 0:v -c copy" "-c copy"
+
 FATE_SAMPLES_FFMPEG += $(FATE_MXF-yes)
 FATE_SAMPLES_FFMPEG_FFPROBE += $(FATE_MXF_FFMPEG_FFPROBE-yes)
 FATE_SAMPLES_FFPROBE += $(FATE_MXF_PROBE-yes)
 
 fate-mxf: $(FATE_MXF-yes) $(FATE_MXF_PROBE-yes) $(FATE_MXF_FFMPEG_FFPROBE-yes)
+
+# Cross the 64 KiB IndexEntryArray limit, so that the index table is split.
+FATE_MXF_INDEX-$(call ENCMUX, MPEG2VIDEO, MXF_OPATOM, COLOR_FILTER FILE_PROTOCOL) += fate-mxf-opatom-index-segments
+fate-mxf-opatom-index-segments: CMD = md5 -filter_complex color=s=64x64:r=25 -frames:v 6000 -c:v mpeg2video -g 12 -bf 2 -threads 1 -dct fastint -flags +bitexact -fflags +bitexact -f mxf_opatom
+
+FATE_FFMPEG += $(FATE_MXF_INDEX-yes)
+fate-mxf: $(FATE_MXF_INDEX-yes)

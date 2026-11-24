@@ -5,8 +5,11 @@ version <next>:
 - DTS:X height channels in the DCA decoder
 - LCEVC raw demuxer and muxer
 - AVS+ (AVS1-P16, Broadcasting profile) support in the Chinese AVS decoder
+- No longer disabling GCC autovectorization on PowerPC, RISC-V, MIPS and LoongArch
 - PCM PAMF decoder
 - Super Audio CD (SACD) demuxer
+- DSS variable rate SP (format 1) support
+- Added the ability to derive an AMF hwdevice from a Vulkan hwdevice
 
 version 9.1:
 - ASTC image encoding and decoding via libastcenc, with .astc and KTX 1.0 muxers and demuxers
@@ -14,17 +17,25 @@ version 9.1:
 - APV Vulkan encoder
 - iTerm2 inline image protocol muxer
 - LCEVC payload merging bitstream filter
+- Graph based bitstream filtering API
 - ffmpeg CLI dual track LCEVC handling
 - MVR demuxer
 - latticepal filter
+- Add AMF Video Quality Enhancer (vf_vqe_amf) filter
+- NVDEC CUARRAY hwaccels
+- libcurl protocol
 - DVD-Audio LPCM decoder and demuxing support
 - AVFoundation input device selection by unique ID and USB serial number
 - NVIDIA optical flow accelerated interpolation filter (vf_fruc_vulkan)
 - H.264 data partitioning support
 - DSD (dsd_msbf) encoder
+- trim bitstream filter
 - Rhetorex ADPCM decoder
+- gainmap filter
+- JPEG Multi-Picture Format muxer
 - ADPCM IMA Citrix decoder
 - Panasonic RW2 decoder
+- Windows handle protocol
 - xHE-AAC encoding via libfdk-xhe-aac
 - jpegapp bitstream filter
 - LCEVC track muxing support in MPEG-TS muxer
@@ -33,7 +44,6 @@ version 9.1:
 - D3D12 DirectML zero-copy inference for the ONNX Runtime DNN backend
 - side_data bitstream filter
 - JPEG Multi-Picture Format demuxer
-- No longer disabling GCC autovectorization on PowerPC, RISC-V, MIPS and LoongArch
 
 
 version 9.0:
@@ -55,7 +65,6 @@ version 9.0:
 - Add AMF hardware memory mapping support.
 - ONNX Runtime DNN backend with GPU execution provider support
 - Remove deprecated NVENC options and support for pre-11.1 SDK versions
-- Add AMF Video Quality Enhancer (vf_vqe_amf) filter
 
 
 version 8.1:

@@ -71,6 +71,7 @@
 #include "riff.h"
 #include "isom.h"
 #include "libavcodec/get_bits.h"
+#include "libavcodec/opus/tab.h"
 #include "id3v1.h"
 #include "mov_chan.h"
 #include "replaygain.h"
@@ -2335,6 +2336,8 @@ static int mov_read_colr(MOVContext *c, AVIOContext *pb, MOVAtom atom)
         ret = ffio_read_size(pb, icc_profile, atom.size - 4);
         if (ret < 0)
             return ret;
+        if (st)
+            ((MOVStreamContext *)st->priv_data)->stsd_colr_trc = 1;
     } else if (st) {
         color_primaries = avio_rb16(pb);
         color_trc = avio_rb16(pb);
@@ -2368,9 +2371,30 @@ static int mov_read_colr(MOVContext *c, AVIOContext *pb, MOVAtom atom)
 
         st->codecpar->color_primaries = color_primaries;
         st->codecpar->color_trc       = color_trc;
+        ((MOVStreamContext *)st->priv_data)->stsd_colr_trc = color_trc != AVCOL_TRC_UNSPECIFIED;
         st->codecpar->color_space     = color_matrix;
         av_log(c->fc, AV_LOG_TRACE, "\n");
     }
+    return 0;
+}
+
+static int mov_read_gama(MOVContext *c, AVIOContext *pb, MOVAtom atom)
+{
+    AVStream *st = get_curr_st(c);
+    MOVStreamContext *sc;
+    double gamma;
+
+    if (!st || atom.size < 4)
+        return 0;
+    sc = st->priv_data;
+
+    gamma = avio_rb32(pb) / 65536.0;
+    av_log(c->fc, AV_LOG_TRACE, "gama %f\n", gamma);
+
+    if (fabs(gamma - 2.2) < 0.01)
+        sc->stsd_gama_trc = AVCOL_TRC_GAMMA22;
+    else if (fabs(gamma - 2.8) < 0.01)
+        sc->stsd_gama_trc = AVCOL_TRC_GAMMA28;
     return 0;
 }
 
@@ -2645,7 +2669,7 @@ static int mov_read_wave(MOVContext *c, AVIOContext *pb, MOVAtom atom)
                     return AVERROR(ENOMEM);
                 st->codecpar->extradata_size = ALAC_EXTRADATA_SIZE;
                 AV_WB32(st->codecpar->extradata    , ALAC_EXTRADATA_SIZE);
-                AV_WB32(st->codecpar->extradata + 4, MKTAG('a','l','a','c'));
+                AV_WL32(st->codecpar->extradata + 4, MKTAG('a','l','a','c'));
                 AV_WB64(st->codecpar->extradata + 12, buffer);
                 avio_read(pb, st->codecpar->extradata + 20, 16);
                 avio_skip(pb, atom.size - 24);
@@ -3333,8 +3357,9 @@ static int mov_finalize_stsd_codec(MOVContext *c, AVIOContext *pb,
         // force sample rate for qcelp when not stored in mov
         if (st->codecpar->codec_tag != MKTAG('Q','c','l','p'))
             st->codecpar->sample_rate = 8000;
-        // FIXME: Why is the following needed for some files?
+        // Each QCELP frame decodes to 160 samples at every coding rate.
         sc->samples_per_frame = 160;
+        // Assume a full-rate frame when the byte count is unset, as in version 0.
         if (!sc->bytes_per_frame)
             sc->bytes_per_frame = 35;
         break;
@@ -3450,6 +3475,7 @@ int ff_mov_read_stsd_entries(MOVContext *c, AVIOContext *pb, int entries)
     AVStream *st;
     MOVStreamContext *sc;
     int pseudo_stream_id;
+    int gama_trc = -1;
 
     av_assert0 (c->fc->nb_streams >= 1);
     st = c->fc->streams[c->fc->nb_streams-1];
@@ -3485,6 +3511,8 @@ int ff_mov_read_stsd_entries(MOVContext *c, AVIOContext *pb, int entries)
         sc->pseudo_stream_id = st->codecpar->codec_tag ? -1 : pseudo_stream_id;
         sc->dref_id= dref_id;
         sc->format = format;
+        sc->stsd_gama_trc = AVCOL_TRC_UNSPECIFIED;
+        sc->stsd_colr_trc = 0;
 
         id = mov_codec_id(st, format);
 
@@ -3524,6 +3552,14 @@ int ff_mov_read_stsd_entries(MOVContext *c, AVIOContext *pb, int entries)
         } else if (a.size > 0)
             avio_skip(pb, a.size);
 
+        // Use gama only when colr does not specify the transfer, like QuickTime does
+        if (sc->stsd_colr_trc)
+            sc->stsd_gama_trc = AVCOL_TRC_UNSPECIFIED;
+        if (gama_trc < 0)
+            gama_trc = sc->stsd_gama_trc;
+        else if (gama_trc != sc->stsd_gama_trc)
+            gama_trc = AVCOL_TRC_UNSPECIFIED;
+
         ret = mov_finalize_stsd_entry(c, st);
         if (ret < 0)
             return ret;
@@ -3539,6 +3575,12 @@ int ff_mov_read_stsd_entries(MOVContext *c, AVIOContext *pb, int entries)
         }
         sc->stsd_count++;
     }
+
+    // Only when every sample description has the same gamma,
+    // and nothing else (e.g. vpcC) set the transfer
+    if ((gama_trc == AVCOL_TRC_GAMMA22 || gama_trc == AVCOL_TRC_GAMMA28) &&
+        st->codecpar->color_trc == AVCOL_TRC_UNSPECIFIED)
+        st->codecpar->color_trc = gama_trc;
 
     if (pb->eof_reached) {
         av_log(c->fc, AV_LOG_WARNING, "reached eof, corrupted STSD atom\n");
@@ -4003,8 +4045,10 @@ static int mov_read_stts(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     }
 
     st->nb_frames= total_sample_count;
+    // The media duration can't be shorter than the sample table, so prefer
+    // the latter when they differ.
     if (duration)
-        st->duration= FFMIN(st->duration, duration);
+        st->duration = duration;
 
     // All samples have zero duration. They have higher chance be chose by
     // mov_find_next_sample, which leads to seek again and again.
@@ -4900,6 +4944,15 @@ truncated:
 
     // Update av stream length, if it ends up shorter than the track's media duration
     st->duration = FFMIN(st->duration, edit_list_dts_entry_end - start_dts);
+    // The skipped samples are counted in the track's clock. With explicit SBR
+    // signalling, HE-AAC often keeps it at the core rate, half the output
+    // rate. A sample rate below the clock may be the core rate of implicit
+    // SBR. With several sample descriptions, the rate may come from one the
+    // packets do not use.
+    if (st->codecpar->codec_id == AV_CODEC_ID_AAC && msc->stsd_count == 1 &&
+        st->codecpar->sample_rate > msc->time_scale && msc->time_scale > 0)
+        sti->skip_samples = FFMIN(av_rescale(sti->skip_samples, st->codecpar->sample_rate,
+                                             msc->time_scale), INT_MAX);
     st->codecpar->initial_padding = sti->skip_samples;
 
     // Free the old index and the old CTTS structures
@@ -9161,9 +9214,9 @@ static int mov_read_dops(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     AV_WL16A(st->codecpar->extradata + 16, AV_RB16A(st->codecpar->extradata + 16));
 
     st->codecpar->initial_padding = pre_skip;
-    st->codecpar->seek_preroll = av_rescale_q(OPUS_SEEK_PREROLL_MS,
-                                              (AVRational){1, 1000},
-                                              (AVRational){1, 48000});
+    st->codecpar->seek_preroll =
+        av_rescale_q(OPUS_SEEK_PREROLL_MS, (AVRational){1, 1000},
+                     (AVRational){1, OPUS_TIMESTAMP_RATE});
 
     return 0;
 }
@@ -10439,6 +10492,7 @@ static const MOVParseTableEntry mov_default_parse_table[] = {
 { MKTAG('c','h','p','l'), mov_read_chpl },
 { MKTAG('c','o','6','4'), mov_read_stco },
 { MKTAG('c','o','l','r'), mov_read_colr },
+{ MKTAG('g','a','m','a'), mov_read_gama },
 { MKTAG('c','t','t','s'), mov_read_ctts }, /* composition time to sample */
 { MKTAG('d','i','n','f'), mov_read_default },
 { MKTAG('D','p','x','E'), mov_read_dpxe },

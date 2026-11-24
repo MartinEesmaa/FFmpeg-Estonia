@@ -1,6 +1,4 @@
 /*
- * VC-1 and WMV3 decoder - X86 DSP init functions
- *
  * This file is part of FFmpeg.
  *
  * FFmpeg is free software; you can redistribute it and/or
@@ -18,17 +16,20 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#ifndef AVCODEC_X86_VC1DSP_H
-#define AVCODEC_X86_VC1DSP_H
+#include "libavutil/attributes.h"
+#include "libavutil/cpu.h"
+#include "libavutil/x86/cpu.h"
+#include "libavfilter/mpdecimate.h"
 
-#include "config.h"
-#include "libavcodec/vc1dsp.h"
+int ff_mpdecimate_sad_8x8_16_sse2(const uint8_t *src1, ptrdiff_t stride1,
+                                  const uint8_t *src2, ptrdiff_t stride2);
 
-#if HAVE_X86_6REGS && HAVE_INLINE_ASM && HAVE_MMX_EXTERNAL
+av_cold av_pixelutils_sad_fn ff_mpdecimate_get_sad16_fn_x86(void)
+{
+    int cpu_flags = av_get_cpu_flags();
 
-void ff_vc1dsp_init_mmx(VC1DSPContext *dsp);
-void ff_vc1dsp_init_mmxext(VC1DSPContext *dsp);
+    if (EXTERNAL_SSE2(cpu_flags))
+        return ff_mpdecimate_sad_8x8_16_sse2;
 
-#endif /* HAVE_X86_6REGS && HAVE_INLINE_ASM && HAVE_MMX_EXTERNAL */
-
-#endif /* AVCODEC_X86_VC1DSP_H */
+    return NULL;
+}

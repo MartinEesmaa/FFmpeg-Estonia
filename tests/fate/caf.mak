@@ -1,6 +1,20 @@
 FATE_CAF_FFMPEG-$(call CRC, CAF) += fate-caf-demux
 fate-caf-demux: CMD = crc -i $(TARGET_SAMPLES)/caf/caf-pcm16.caf -c copy
 
+FATE_CAF_FFMPEG-$(call DEMMUX, CAF, FRAMECRC, PIPE_PROTOCOL) += fate-caf-ima4-demux
+fate-caf-ima4-demux: CMD = framecrc -i $(TARGET_SAMPLES)/caf/ima4.caf -c copy
+
+FATE_CAF_FFMPEG-$(call DEMMUX, CAF, FRAMECRC, PIPE_PROTOCOL) += fate-caf-ilbc-demux
+fate-caf-ilbc-demux: CMD = framecrc -i $(TARGET_SAMPLES)/caf/ilbc.caf -c copy
+
+FATE_CAF_FFMPEG-$(call DEMMUX, CAF, FRAMECRC, PIPE_PROTOCOL) += fate-caf-ima4-pipe
+fate-caf-ima4-pipe: CMD = cat $(SAMPLES)/caf/ima4.caf | framecrc -i pipe: -c copy
+fate-caf-ima4-pipe: REF = $(SRC_PATH)/tests/ref/fate/caf-ima4-demux
+
+FATE_CAF_FFMPEG-$(call DEMMUX, CAF, FRAMECRC, PIPE_PROTOCOL) += fate-caf-ilbc-pipe
+fate-caf-ilbc-pipe: CMD = cat $(SAMPLES)/caf/ilbc.caf | framecrc -i pipe: -c copy
+fate-caf-ilbc-pipe: REF = $(SRC_PATH)/tests/ref/fate/caf-ilbc-demux
+
 FATE_CAF_FFMPEG_FFPROBE-$(call REMUX, CAF, MOV_DEMUXER) += fate-caf-alac-remux
 fate-caf-alac-remux: CMD = transcode m4a $(TARGET_SAMPLES)/lossless-audio/inside.m4a caf "-map 0:a -c copy -metadata major_brand= " "-c copy -t 0.2" "-show_entries format_tags"
 
@@ -21,6 +35,11 @@ fate-caf-pcm_s24-remux: CMD = transcode wav $(TARGET_SAMPLES)/audio-reference/di
 FATE_CAF_FFMPEG-$(call REMUX, CAF, MOV_DEMUXER) += fate-caf-mace6-remux
 fate-caf-mace6-remux: CMD = transcode mov $(TARGET_SAMPLES)/qtrle/Animation-16Greys.mov caf "-map 0:a -c copy" "-c copy -t 0.003"
 
+# priming beyond the 16-bit OpusHead pre-skip
+FATE_CAF_FFPROBE-$(call DEMDEC, CAF, OPUS) += fate-caf-opus-large-priming
+fate-caf-opus-large-priming: CMD = run ffprobe$(PROGSSUF)$(EXESUF) -show_data -show_entries stream=initial_padding,extradata $(TARGET_SAMPLES)/caf/opus-large-priming.caf
+
 FATE_SAMPLES_FFMPEG         += $(FATE_CAF_FFMPEG-yes)
 FATE_SAMPLES_FFMPEG_FFPROBE += $(FATE_CAF_FFMPEG_FFPROBE-yes)
-fate-caf: $(FATE_CAF_FFMPEG-yes) $(FATE_CAF_FFMPEG_FFPROBE-yes)
+FATE_SAMPLES_FFPROBE        += $(FATE_CAF_FFPROBE-yes)
+fate-caf: $(FATE_CAF_FFMPEG-yes) $(FATE_CAF_FFMPEG_FFPROBE-yes) $(FATE_CAF_FFPROBE-yes)
